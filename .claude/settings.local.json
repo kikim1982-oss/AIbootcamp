@@ -9,7 +9,27 @@
       "Bash(python -c \"from PIL import Image; print\\(''PIL available''\\)\")",
       "Bash(pip install:*)",
       "Bash(python:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "WebSearch",
+      "WebFetch(domain:www.thestreet.com)",
+      "WebFetch(domain:www.cnbc.com)",
+      "WebFetch(domain:www.getnews.co.kr)",
+      "WebFetch(domain:biz.sbs.co.kr)",
+      "WebFetch(domain:markets.hankyung.com)",
+      "WebFetch(domain:namu.wiki)",
+      "WebFetch(domain:finance.naver.com)",
+      "WebFetch(domain:dart.fss.or.kr)",
+      "WebFetch(domain:kind.krx.co.kr)",
+      "WebFetch(domain:comp.fnguide.com)",
+      "WebFetch(domain:m.irgo.co.kr)",
+      "WebFetch(domain:ko.wikipedia.org)",
+      "WebFetch(domain:itooza.com)",
+      "Bash(pandoc --version)",
+      "Bash(npm list:*)",
+      "Bash(npm install:*)",
+      "Bash(npx md-to-pdf:*)",
+      "WebFetch(domain:ai.google.dev)",
+      "WebFetch(domain:nanobanana.im)"
     ]
   }
 }
