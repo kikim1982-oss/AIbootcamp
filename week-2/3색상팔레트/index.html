@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>색상 팔레트 생성기</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    .color-card {
+      transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.4s ease;
+    }
+    .color-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+    .color-card:active {
+      transform: translateY(0);
+    }
+    .toast-enter {
+      animation: toastIn 0.3s ease forwards;
+    }
+    .toast-exit {
+      animation: toastOut 0.3s ease forwards;
+    }
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes toastOut {
+      from { opacity: 1; transform: translateY(0); }
+      to { opacity: 0; transform: translateY(20px); }
+    }
+    input[type="color"] {
+      -webkit-appearance: none;
+      border: none;
+      cursor: pointer;
+    }
+    input[type="color"]::-webkit-color-swatch-wrapper {
+      padding: 0;
+    }
+    input[type="color"]::-webkit-color-swatch {
+      border: 2px solid rgba(255,255,255,0.3);
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body class="bg-gray-900 min-h-screen">
+  <div id="root"></div>
+  <script type="text/babel">
+    // ========================================
+    // React Hooks Destructuring
+    // ========================================
+    const { useState, useCallback, useEffect, useRef } = React;
+
+    // ========================================
+    // Color Utility Functions
+    // ========================================
+    function hexToHSL(hex) {
+      hex = hex.replace('#', '');
+      const r = parseInt(hex.substring(0, 2), 16) / 255;
+      const g = parseInt(hex.substring(2, 4), 16) / 255;
+      const b = parseInt(hex.substring(4, 6), 16) / 255;
+
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      let h, s, l = (max + min) / 2;
+
+      if (max === min) {
+        h = s = 0;
+      } else {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+          case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+          case g: h = ((b - r) / d + 2) / 6; break;
+          case b: h = ((r - g) / d + 4) / 6; break;
+        }
+      }
+      return { h: h * 360, s: s * 100, l: l * 100 };
+    }
+
+    function hslToHex(h, s, l) {
+      s /= 100;
+      l /= 100;
+      const a = s * Math.min(l, 1 - l);
+      const f = (n) => {
+        const k = (n + h / 30) % 12;
+        const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+        return Math.round(255 * Math.max(0, Math.min(1, color)))
+          .toString(16)
+          .padStart(2, '0');
+      };
+      return `#${f(0)}${f(8)}${f(4)}`.toUpperCase();
+    }
+
+    function generatePalette(hex) {
+      const { h, s, l } = hexToHSL(hex);
+      const steps = [45, 30, 15];
+
+      const darks = steps.map(step => {
+        const newL = Math.max(0, l - step);
+        return hslToHex(h, s, newL);
+      });
+
+      const lights = [15, 30, 45].map(step => {
+        const newL = Math.min(95, l + step);
+        return hslToHex(h, s, newL);
+      });
+
+      return { darks, lights, main: hex.toUpperCase() };
+    }
+
+    function randomHex() {
+      const r = () => Math.floor(Math.random() * 200 + 28).toString(16).padStart(2, '0');
+      return `#${r()}${r()}${r()}`.toUpperCase();
+    }
+
+    function getContrastColor(hex) {
+      hex = hex.replace('#', '');
+      const r = parseInt(hex.substring(0, 2), 16);
+      const g = parseInt(hex.substring(2, 4), 16);
+      const b = parseInt(hex.substring(4, 6), 16);
+      const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      return luminance > 0.5 ? '#1a1a1a' : '#ffffff';
+    }
+
+    function isValidHex(hex) {
+      return /^#?[0-9A-Fa-f]{6}$/.test(hex);
+    }
+
+    // ========================================
+    // 🎨 Design System Components
+    // ========================================
+    function Button({ children, onClick, variant = 'primary', size = 'md', disabled = false, className = '' }) {
+      const base = 'font-semibold rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 inline-flex items-center justify-center gap-2';
+      const variants = {
+        primary: 'bg-indigo-600 hover:bg-indigo-500 text-white focus:ring-indigo-500',
+        secondary: 'bg-gray-700 hover:bg-gray-600 text-gray-200 focus:ring-gray-500',
+        ghost: 'bg-transparent hover:bg-gray-800 text-gray-300 focus:ring-gray-500',
+      };
+      const sizes = {
+        sm: 'px-3 py-1.5 text-sm',
+        md: 'px-4 py-2 text-sm',
+        lg: 'px-6 py-3 text-base',
+      };
+      return (
+        <button
+          onClick={onClick}
+          disabled={disabled}
+          className={`${base} ${variants[variant]} ${sizes[size]} ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} ${className}`}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    function Toast({ message, visible, exiting }) {
+      if (!visible) return null;
+      return (
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 ${exiting ? 'toast-exit' : 'toast-enter'}`}>
+          <div className="bg-gray-800 border border-gray-600 text-white px-5 py-3 rounded-xl shadow-2xl text-sm flex items-center gap-2">
+            <svg className="w-4 h-4 text-green-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+            </svg>
+            {message}
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🧩 ColorCard Component
+    // ========================================
+    function ColorCard({ color, label, sublabel, isMain, onClick }) {
+      const textColor = getContrastColor(color);
+      return (
+        <button
+          onClick={() => onClick(color)}
+          className={`color-card rounded-2xl flex flex-col items-center justify-end cursor-pointer border-0 outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 focus:ring-offset-gray-900 ${
+            isMain ? 'w-28 sm:w-36 h-52 sm:h-64 shadow-2xl ring-2 ring-white/20' : 'w-20 sm:w-28 h-40 sm:h-48 shadow-lg'
+          }`}
+          style={{ backgroundColor: color }}
+          title={`${color} 클릭하여 복사`}
+          aria-label={`${label} ${color} 복사`}
+        >
+          <div className="pb-3 sm:pb-4 text-center">
+            {sublabel && (
+              <span className="block text-[10px] sm:text-xs font-medium opacity-70 mb-1" style={{ color: textColor }}>
+                {sublabel}
+              </span>
+            )}
+            {label && (
+              <span className={`block font-bold mb-1 ${isMain ? 'text-xs sm:text-sm' : 'text-[10px] sm:text-xs'}`} style={{ color: textColor }}>
+                {label}
+              </span>
+            )}
+            <span className={`block font-mono font-bold ${isMain ? 'text-sm sm:text-base' : 'text-[10px] sm:text-xs'}`} style={{ color: textColor }}>
+              {color}
+            </span>
+          </div>
+        </button>
+      );
+    }
+
+    // ========================================
+    // 🧩 HistoryBar Component
+    // ========================================
+    function HistoryBar({ history, onSelect }) {
+      if (history.length === 0) return null;
+      return (
+        <div className="flex flex-col items-center gap-2 mt-8">
+          <span className="text-gray-500 text-xs font-medium tracking-wide uppercase">최근 선택 히스토리</span>
+          <div className="flex gap-2 flex-wrap justify-center">
+            {history.map((hex, i) => (
+              <button
+                key={`${hex}-${i}`}
+                onClick={() => onSelect(hex)}
+                className="w-9 h-9 rounded-lg border-2 border-gray-700 hover:border-gray-400 transition-all duration-200 cursor-pointer shadow-md hover:scale-110 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                style={{ backgroundColor: hex }}
+                title={hex}
+                aria-label={`히스토리 색상 ${hex}`}
+              />
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 📄 App Component
+    // ========================================
+    function App() {
+      const [color, setColor] = useState('#3B82F6');
+      const [hexInput, setHexInput] = useState('#3B82F6');
+      const [history, setHistory] = useState([]);
+      const [toast, setToast] = useState({ visible: false, message: '', exiting: false });
+      const toastTimer = useRef(null);
+
+      const palette = generatePalette(color);
+
+      const showToast = useCallback((message) => {
+        if (toastTimer.current) clearTimeout(toastTimer.current);
+        setToast({ visible: true, message, exiting: false });
+        toastTimer.current = setTimeout(() => {
+          setToast(prev => ({ ...prev, exiting: true }));
+          setTimeout(() => setToast({ visible: false, message: '', exiting: false }), 300);
+        }, 1800);
+      }, []);
+
+      const addToHistory = useCallback((hex) => {
+        setHistory(prev => {
+          const filtered = prev.filter(h => h !== hex);
+          return [hex, ...filtered].slice(0, 8);
+        });
+      }, []);
+
+      const applyColor = useCallback((hex) => {
+        const upper = hex.toUpperCase();
+        setColor(upper);
+        setHexInput(upper);
+        addToHistory(upper);
+      }, [addToHistory]);
+
+      const handlePickerChange = (e) => {
+        const hex = e.target.value.toUpperCase();
+        setColor(hex);
+        setHexInput(hex);
+      };
+
+      const handlePickerComplete = (e) => {
+        addToHistory(e.target.value.toUpperCase());
+      };
+
+      const handleHexInput = (e) => {
+        let val = e.target.value;
+        setHexInput(val);
+        if (!val.startsWith('#')) val = '#' + val;
+        if (isValidHex(val)) {
+          setColor(val.toUpperCase());
+        }
+      };
+
+      const handleHexSubmit = (e) => {
+        e.preventDefault();
+        let val = hexInput;
+        if (!val.startsWith('#')) val = '#' + val;
+        if (isValidHex(val)) {
+          applyColor(val);
+        }
+      };
+
+      const handleRandom = () => {
+        applyColor(randomHex());
+      };
+
+      const handleCopyOne = useCallback((hex) => {
+        navigator.clipboard.writeText(hex).then(() => {
+          showToast(`${hex} 복사 완료!`);
+        }).catch(() => {
+          showToast('복사에 실패했습니다');
+        });
+      }, [showToast]);
+
+      const handleCopyAll = useCallback(() => {
+        const all = [...palette.darks, palette.main, ...palette.lights].join(', ');
+        navigator.clipboard.writeText(all).then(() => {
+          showToast('전체 팔레트 복사 완료!');
+        }).catch(() => {
+          showToast('복사에 실패했습니다');
+        });
+      }, [palette, showToast]);
+
+      const darkLabels = ['-45%', '-30%', '-15%'];
+      const lightLabels = ['+15%', '+30%', '+45%'];
+
+      return (
+        <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center px-4 py-8 sm:py-12">
+          {/* Header */}
+          <h1 className="text-2xl sm:text-3xl font-bold text-white mb-1 tracking-tight">
+            색상 팔레트 생성기
+          </h1>
+          <p className="text-gray-500 text-sm mb-8">색상을 선택하면 어두운/밝은 변형을 자동으로 만들어 드립니다</p>
+
+          {/* Controls */}
+          <div className="flex flex-wrap items-center justify-center gap-3 mb-10">
+            <input
+              type="color"
+              value={color}
+              onChange={handlePickerChange}
+              onBlur={handlePickerComplete}
+              className="w-12 h-12 rounded-xl cursor-pointer bg-transparent"
+              aria-label="색상 선택"
+            />
+
+            <form onSubmit={handleHexSubmit} className="flex items-center gap-2">
+              <input
+                type="text"
+                value={hexInput}
+                onChange={handleHexInput}
+                placeholder="#3B82F6"
+                maxLength={7}
+                className="w-28 sm:w-32 px-3 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent placeholder-gray-500"
+                aria-label="HEX 색상 코드 입력"
+              />
+            </form>
+
+            <Button onClick={handleRandom} variant="secondary">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              랜덤
+            </Button>
+
+            <Button onClick={handleCopyAll} variant="ghost">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+              전체 복사
+            </Button>
+          </div>
+
+          {/* Palette Cards */}
+          <div className="flex items-end justify-center gap-2 sm:gap-3 flex-wrap">
+            {/* Dark variants: -45%, -30%, -15% */}
+            {palette.darks.map((hex, i) => (
+              <ColorCard
+                key={`dark-${i}`}
+                color={hex}
+                label={darkLabels[i]}
+                isMain={false}
+                onClick={handleCopyOne}
+              />
+            ))}
+
+            {/* Main color */}
+            <ColorCard
+              color={palette.main}
+              label="선택 색상"
+              isMain={true}
+              onClick={handleCopyOne}
+            />
+
+            {/* Light variants: +15%, +30%, +45% */}
+            {palette.lights.map((hex, i) => (
+              <ColorCard
+                key={`light-${i}`}
+                color={hex}
+                label={lightLabels[i]}
+                isMain={false}
+                onClick={handleCopyOne}
+              />
+            ))}
+          </div>
+
+          {/* History */}
+          <HistoryBar history={history} onSelect={applyColor} />
+
+          {/* Toast */}
+          <Toast message={toast.message} visible={toast.visible} exiting={toast.exiting} />
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🚀 Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

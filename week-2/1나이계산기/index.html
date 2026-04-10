@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>만 나이 계산기</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { font-family: 'Noto Sans KR', -apple-system, BlinkMacSystemFont, sans-serif; }
+    body { background: #f5f5f7; }
+
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(24px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes scaleIn {
+      from { opacity: 0; transform: scale(0.9); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    @keyframes countUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .animate-fade-in-up {
+      animation: fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    .animate-scale-in {
+      animation: scaleIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    .animate-count-up {
+      animation: countUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    .delay-100 { animation-delay: 0.1s; opacity: 0; }
+    .delay-200 { animation-delay: 0.2s; opacity: 0; }
+    .delay-300 { animation-delay: 0.3s; opacity: 0; }
+    .delay-400 { animation-delay: 0.4s; opacity: 0; }
+
+    .glass-card {
+      background: rgba(255, 255, 255, 0.72);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.8);
+    }
+
+    input[type="date"]::-webkit-calendar-picker-indicator {
+      cursor: pointer;
+      opacity: 0.5;
+      transition: opacity 0.2s;
+    }
+    input[type="date"]::-webkit-calendar-picker-indicator:hover {
+      opacity: 1;
+    }
+
+    .progress-ring-bg { stroke: #e5e7eb; }
+    .progress-ring-fill {
+      transition: stroke-dashoffset 1s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+  </style>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            apple: {
+              blue: '#007AFF',
+              indigo: '#5856D6',
+              purple: '#AF52DE',
+              pink: '#FF2D55',
+              orange: '#FF9500',
+              green: '#34C759',
+              gray: { 100: '#f5f5f7', 200: '#e8e8ed', 300: '#d2d2d7', 400: '#86868b', 500: '#6e6e73', 600: '#1d1d1f' }
+            }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useMemo, useEffect, useRef } = React;
+
+    // ========================================
+    // 🎨 Design System Components
+    // ========================================
+
+    function Card({ children, className = '' }) {
+      return (
+        <div className={`glass-card rounded-2xl shadow-sm ${className}`}>
+          {children}
+        </div>
+      );
+    }
+
+    function StatCard({ label, value, unit, sublabel, color = 'text-apple-blue', icon, delay = '' }) {
+      return (
+        <div className={`animate-fade-in-up ${delay}`}>
+          <Card className="p-5 sm:p-6 text-center hover:shadow-md transition-shadow duration-300">
+            <div className="text-2xl mb-2">{icon}</div>
+            <p className="text-xs sm:text-sm text-apple-gray-400 font-medium tracking-wide uppercase mb-2">
+              {label}
+            </p>
+            <p className={`text-3xl sm:text-4xl font-bold ${color} animate-count-up`}>
+              {value}
+              {unit && <span className="text-base sm:text-lg font-medium ml-1 text-apple-gray-400">{unit}</span>}
+            </p>
+            {sublabel && (
+              <p className="text-xs text-apple-gray-400 mt-2">{sublabel}</p>
+            )}
+          </Card>
+        </div>
+      );
+    }
+
+    function BirthdayProgress({ daysUntil, totalDaysInYear }) {
+      const radius = 54;
+      const circumference = 2 * Math.PI * radius;
+      const daysPassed = totalDaysInYear - daysUntil;
+      const progress = daysPassed / totalDaysInYear;
+      const offset = circumference - progress * circumference;
+
+      return (
+        <div className="flex items-center justify-center">
+          <svg width="128" height="128" viewBox="0 0 128 128" className="transform -rotate-90">
+            <circle
+              cx="64" cy="64" r={radius}
+              fill="none"
+              strokeWidth="8"
+              className="progress-ring-bg"
+            />
+            <circle
+              cx="64" cy="64" r={radius}
+              fill="none"
+              strokeWidth="8"
+              strokeLinecap="round"
+              stroke="url(#gradient)"
+              strokeDasharray={circumference}
+              strokeDashoffset={offset}
+              className="progress-ring-fill"
+            />
+            <defs>
+              <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#007AFF" />
+                <stop offset="100%" stopColor="#5856D6" />
+              </linearGradient>
+            </defs>
+          </svg>
+          <div className="absolute text-center">
+            <p className="text-2xl font-bold text-apple-gray-600">{daysUntil}</p>
+            <p className="text-[10px] text-apple-gray-400 font-medium">일 남음</p>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🔮 사주팔자 (Four Pillars) Calculator
+    // ========================================
+
+    const 천간 = ['갑', '을', '병', '정', '무', '기', '경', '신', '임', '계'];
+    const 지지 = ['자', '축', '인', '묘', '진', '사', '오', '미', '신', '유', '술', '해'];
+    const 오행 = ['목', '목', '화', '화', '토', '토', '금', '금', '수', '수'];
+    const 오행색 = { '목': '#34C759', '화': '#FF2D55', '토': '#FF9500', '금': '#FFD60A', '수': '#007AFF' };
+    const 오행한자 = { '목': '木', '화': '火', '토': '土', '금': '金', '수': '水' };
+    const 천간한자 = ['甲', '乙', '丙', '丁', '戊', '己', '庚', '辛', '壬', '癸'];
+    const 지지한자 = ['子', '丑', '寅', '卯', '辰', '巳', '午', '未', '申', '酉', '戌', '亥'];
+
+    // Julian Day Number 계산
+    function getJDN(year, month, day) {
+      const a = Math.floor((14 - month) / 12);
+      const y = year + 4800 - a;
+      const m = month + 12 * a - 3;
+      return day + Math.floor((153 * m + 2) / 5) + 365 * y +
+        Math.floor(y / 4) - Math.floor(y / 100) + Math.floor(y / 400) - 32045;
+    }
+
+    // 절기 기반 월 지지 (양력 근사)
+    const 월경계 = [
+      [2, 4], [3, 6], [4, 5], [5, 6], [6, 6], [7, 7],
+      [8, 8], [9, 8], [10, 8], [11, 7], [12, 7], [1, 5]
+    ];
+
+    function getMonthBranch(month, day) {
+      // 인(2)월부터 시작: 입춘~경칩, 경칩~청명, ...
+      const boundaries = [
+        { m: 1, d: 5, branch: 1 },   // 축월 1/5~2/3
+        { m: 2, d: 4, branch: 2 },   // 인월 2/4~3/5
+        { m: 3, d: 6, branch: 3 },   // 묘월 3/6~4/4
+        { m: 4, d: 5, branch: 4 },   // 진월 4/5~5/5
+        { m: 5, d: 6, branch: 5 },   // 사월 5/6~6/5
+        { m: 6, d: 6, branch: 6 },   // 오월 6/6~7/6
+        { m: 7, d: 7, branch: 7 },   // 미월 7/7~8/7
+        { m: 8, d: 8, branch: 8 },   // 신월 8/8~9/7
+        { m: 9, d: 8, branch: 9 },   // 유월 9/8~10/7
+        { m: 10, d: 8, branch: 10 }, // 술월 10/8~11/6
+        { m: 11, d: 7, branch: 11 }, // 해월 11/7~12/6
+        { m: 12, d: 7, branch: 0 },  // 자월 12/7~1/4
+      ];
+      for (let i = boundaries.length - 1; i >= 0; i--) {
+        const b = boundaries[i];
+        if (month > b.m || (month === b.m && day >= b.d)) {
+          return b.branch;
+        }
+      }
+      return 1; // 축월 (1월 초)
+    }
+
+    // 사주년도 (입춘 기준, 약 2월 4일)
+    function getSajuYear(year, month, day) {
+      if (month < 2 || (month === 2 && day < 4)) {
+        return year - 1;
+      }
+      return year;
+    }
+
+    function calculateSaju(year, month, day, hour) {
+      const sajuYear = getSajuYear(year, month, day);
+
+      // 연주 (Year Pillar)
+      const yearStemIdx = (sajuYear - 4) % 10;
+      const yearBranchIdx = (sajuYear - 4) % 12;
+
+      // 월주 (Month Pillar)
+      const monthBranchIdx = getMonthBranch(month, day);
+      // 월간 시작: 갑/기→병, 을/경→무, 병/신→경, 정/임→임, 무/계→갑
+      const monthStemStarts = [2, 4, 6, 8, 0]; // 병, 무, 경, 임, 갑
+      const monthStemStart = monthStemStarts[yearStemIdx % 5];
+      const monthStemIdx = (monthStemStart + (monthBranchIdx - 2 + 12) % 12) % 10;
+
+      // 일주 (Day Pillar) - Julian Day Number 기반
+      const jdn = getJDN(year, month, day);
+      const REF_JDN = 2451551; // 2000-01-07 = 갑자일
+      const dayStemIdx = ((jdn - REF_JDN) % 10 + 10) % 10;
+      const dayBranchIdx = ((jdn - REF_JDN) % 12 + 12) % 12;
+
+      // 시주 (Hour Pillar)
+      let hourBranchIdx;
+      if (hour === null || hour === undefined) {
+        hourBranchIdx = null;
+      } else {
+        // 자시: 23-01, 축시: 01-03, ...
+        if (hour >= 23 || hour < 1) hourBranchIdx = 0;
+        else hourBranchIdx = Math.floor((hour + 1) / 2);
+      }
+
+      let hourStemIdx = null;
+      if (hourBranchIdx !== null) {
+        // 시간 시작: 갑/기→갑, 을/경→병, 병/신→무, 정/임→경, 무/계→임
+        const hourStemStarts = [0, 2, 4, 6, 8];
+        const hourStemStart = hourStemStarts[dayStemIdx % 5];
+        hourStemIdx = (hourStemStart + hourBranchIdx) % 10;
+      }
+
+      return {
+        year: { stem: yearStemIdx, branch: yearBranchIdx },
+        month: { stem: monthStemIdx, branch: monthBranchIdx },
+        day: { stem: dayStemIdx, branch: dayBranchIdx },
+        hour: hourStemIdx !== null
+          ? { stem: hourStemIdx, branch: hourBranchIdx }
+          : null,
+      };
+    }
+
+    // 사주팔자 표시 컴포넌트
+    function SajuPillar({ label, stem, branch }) {
+      const stemElement = 오행[stem];
+      const branchElement = 오행[branch % 5 * 2]; // 지지 오행 매핑
+      // 지지 오행 정확한 매핑
+      const 지지오행 = ['수','토','목','목','토','화','화','토','금','금','토','수'];
+      const bElement = 지지오행[branch];
+      const stemColor = 오행색[stemElement];
+      const branchColor = 오행색[bElement];
+
+      return (
+        <div className="flex flex-col items-center gap-1.5">
+          <p className="text-[10px] text-apple-gray-400 font-semibold tracking-wider uppercase">{label}</p>
+          <div className="flex flex-col items-center gap-1 w-16 sm:w-20">
+            {/* 천간 */}
+            <div
+              className="w-full py-2.5 rounded-xl text-center font-bold text-lg sm:text-xl"
+              style={{ background: `${stemColor}15`, color: stemColor, border: `1.5px solid ${stemColor}30` }}
+            >
+              <div>{천간[stem]}</div>
+              <div className="text-[10px] font-normal opacity-70">{천간한자[stem]}</div>
+            </div>
+            {/* 지지 */}
+            <div
+              className="w-full py-2.5 rounded-xl text-center font-bold text-lg sm:text-xl"
+              style={{ background: `${branchColor}15`, color: branchColor, border: `1.5px solid ${branchColor}30` }}
+            >
+              <div>{지지[branch]}</div>
+              <div className="text-[10px] font-normal opacity-70">{지지한자[branch]}</div>
+            </div>
+          </div>
+          <div className="flex gap-1 mt-0.5">
+            <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
+              style={{ background: `${stemColor}18`, color: stemColor }}>
+              {오행한자[stemElement]}{stemElement}
+            </span>
+            <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
+              style={{ background: `${branchColor}18`, color: branchColor }}>
+              {오행한자[bElement]}{bElement}
+            </span>
+          </div>
+        </div>
+      );
+    }
+
+    function SajuDisplay({ saju }) {
+      const pillars = [
+        { label: '시주', data: saju.hour },
+        { label: '일주', data: saju.day },
+        { label: '월주', data: saju.month },
+        { label: '연주', data: saju.year },
+      ];
+
+      // 오행 카운트
+      const 지지오행 = ['수','토','목','목','토','화','화','토','금','금','토','수'];
+      const counts = { '목': 0, '화': 0, '토': 0, '금': 0, '수': 0 };
+      [saju.year, saju.month, saju.day, saju.hour].forEach(p => {
+        if (!p) return;
+        counts[오행[p.stem]]++;
+        counts[지지오행[p.branch]]++;
+      });
+
+      return (
+        <div>
+          {/* 4 Pillars */}
+          <div className="flex justify-center gap-3 sm:gap-5 mb-6">
+            {pillars.map((p, i) => (
+              p.data ? (
+                <div key={p.label} className="animate-fade-in-up" style={{ animationDelay: `${i * 0.1}s`, opacity: 0 }}>
+                  <SajuPillar label={p.label} stem={p.data.stem} branch={p.data.branch} />
+                </div>
+              ) : (
+                <div key={p.label} className="flex flex-col items-center gap-1.5 animate-fade-in-up" style={{ animationDelay: `${i * 0.1}s`, opacity: 0 }}>
+                  <p className="text-[10px] text-apple-gray-400 font-semibold tracking-wider uppercase">{p.label}</p>
+                  <div className="flex flex-col items-center gap-1 w-16 sm:w-20">
+                    <div className="w-full py-2.5 rounded-xl text-center text-apple-gray-300 bg-apple-gray-100 border border-dashed border-apple-gray-200">
+                      <div className="text-lg">?</div>
+                      <div className="text-[10px]">시간 입력</div>
+                    </div>
+                    <div className="w-full py-2.5 rounded-xl text-center text-apple-gray-300 bg-apple-gray-100 border border-dashed border-apple-gray-200">
+                      <div className="text-lg">?</div>
+                      <div className="text-[10px]">필요</div>
+                    </div>
+                  </div>
+                </div>
+              )
+            ))}
+          </div>
+
+          {/* 오행 분포 */}
+          <div className="animate-fade-in-up" style={{ animationDelay: '0.4s', opacity: 0 }}>
+            <p className="text-xs text-apple-gray-400 font-semibold text-center mb-3 tracking-wider uppercase">오행 분포</p>
+            <div className="flex justify-center gap-2">
+              {Object.entries(counts).map(([element, count]) => {
+                const total = saju.hour ? 8 : 6;
+                const pct = Math.round((count / total) * 100);
+                return (
+                  <div key={element} className="flex flex-col items-center gap-1.5 flex-1 max-w-[64px]">
+                    <div className="w-full bg-apple-gray-100 rounded-full h-2 overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-1000"
+                        style={{ width: `${pct}%`, background: 오행색[element] }}
+                      />
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full" style={{ background: 오행색[element] }} />
+                      <span className="text-[11px] font-medium text-apple-gray-500">
+                        {오행한자[element]} {count}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 📄 Page Components
+    // ========================================
+
+    function AgeCalculator() {
+      const [birthDate, setBirthDate] = useState('');
+      const [birthTime, setBirthTime] = useState('');
+      const [animationKey, setAnimationKey] = useState(0);
+      const today = new Date();
+
+      const maxDate = today.toISOString().split('T')[0];
+
+      const result = useMemo(() => {
+        if (!birthDate) return null;
+
+        const birth = new Date(birthDate + 'T00:00:00');
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+
+        if (birth > now || isNaN(birth.getTime())) return null;
+
+        const birthYear = birth.getFullYear();
+        const birthMonth = birth.getMonth();
+        const birthDay = birth.getDate();
+
+        const currentYear = now.getFullYear();
+        const currentMonth = now.getMonth();
+        const currentDay = now.getDate();
+
+        // Calculate 만 나이
+        let age = currentYear - birthYear;
+        const hadBirthdayThisYear =
+          currentMonth > birthMonth ||
+          (currentMonth === birthMonth && currentDay >= birthDay);
+
+        if (!hadBirthdayThisYear) {
+          age -= 1;
+        }
+
+        // Calculate months and days for detailed age
+        let months, days;
+        if (hadBirthdayThisYear) {
+          months = currentMonth - birthMonth;
+          if (currentDay < birthDay) {
+            months -= 1;
+            const prevMonth = new Date(currentYear, currentMonth, 0);
+            days = prevMonth.getDate() - birthDay + currentDay;
+          } else {
+            days = currentDay - birthDay;
+          }
+        } else {
+          months = 12 - birthMonth + currentMonth - 1;
+          if (currentDay >= birthDay) {
+            months += 1;
+            days = currentDay - birthDay;
+          } else {
+            const prevMonth = new Date(currentYear, currentMonth, 0);
+            days = prevMonth.getDate() - birthDay + currentDay;
+          }
+          months = months % 12;
+        }
+
+        // Total days alive
+        const diffTime = now.getTime() - birth.getTime();
+        const totalDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1;
+
+        // Days until next birthday
+        let nextBirthday = new Date(currentYear, birthMonth, birthDay);
+        if (nextBirthday <= now) {
+          nextBirthday = new Date(currentYear + 1, birthMonth, birthDay);
+        }
+        // Handle Feb 29 birthdays
+        if (birthMonth === 1 && birthDay === 29) {
+          while (nextBirthday.getMonth() !== 1) {
+            nextBirthday = new Date(nextBirthday.getFullYear() + 1, 1, 29);
+          }
+        }
+        const daysUntilBirthday = Math.ceil((nextBirthday.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+
+        // Is today birthday?
+        const isBirthday = currentMonth === birthMonth && currentDay === birthDay;
+
+        // Days in the current birthday year cycle
+        const lastBirthday = hadBirthdayThisYear
+          ? new Date(currentYear, birthMonth, birthDay)
+          : new Date(currentYear - 1, birthMonth, birthDay);
+        const totalDaysInYear = Math.ceil((nextBirthday.getTime() - lastBirthday.getTime()) / (1000 * 60 * 60 * 24));
+
+        // Total weeks alive
+        const totalWeeks = Math.floor(totalDays / 7);
+
+        // Birth day of week
+        const dayNames = ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'];
+        const birthDayOfWeek = dayNames[birth.getDay()];
+
+        // Zodiac
+        const zodiacSigns = [
+          { name: '염소자리', end: [1, 19] }, { name: '물병자리', end: [2, 18] },
+          { name: '물고기자리', end: [3, 20] }, { name: '양자리', end: [4, 19] },
+          { name: '황소자리', end: [5, 20] }, { name: '쌍둥이자리', end: [6, 21] },
+          { name: '게자리', end: [7, 22] }, { name: '사자자리', end: [8, 22] },
+          { name: '처녀자리', end: [9, 22] }, { name: '천칭자리', end: [10, 23] },
+          { name: '전갈자리', end: [11, 22] }, { name: '궁수자리', end: [12, 21] },
+          { name: '염소자리', end: [12, 31] }
+        ];
+        const m = birthMonth + 1;
+        const d = birthDay;
+        const zodiac = zodiacSigns.find(z => m < z.end[0] || (m === z.end[0] && d <= z.end[1]))?.name || '염소자리';
+
+        // Chinese zodiac (띠)
+        const animals = ['원숭이', '닭', '개', '돼지', '쥐', '소', '호랑이', '토끼', '용', '뱀', '말', '양'];
+        const chineseZodiac = animals[birthYear % 12] + '띠';
+
+        // 한국 나이: 태어나면 1살, 새해마다 +1살
+        const koreanAge = currentYear - birthYear + 1;
+
+        // 사주팔자
+        const hourValue = birthTime ? parseInt(birthTime.split(':')[0]) : null;
+        const saju = calculateSaju(birthYear, birthMonth + 1, birthDay, hourValue);
+
+        return {
+          age, months, days, totalDays, daysUntilBirthday,
+          isBirthday, totalDaysInYear, totalWeeks,
+          birthDayOfWeek, zodiac, chineseZodiac,
+          koreanAge, saju, birthDateObj: birth
+        };
+      }, [birthDate, birthTime]);
+
+      const handleDateChange = (e) => {
+        setBirthDate(e.target.value);
+        setAnimationKey(prev => prev + 1);
+      };
+
+      const handleTimeChange = (e) => {
+        setBirthTime(e.target.value);
+        setAnimationKey(prev => prev + 1);
+      };
+
+      const formatDate = (date) => {
+        return `${date.getFullYear()}년 ${date.getMonth() + 1}월 ${date.getDate()}일`;
+      };
+
+      return (
+        <div className="min-h-screen bg-[#f5f5f7] pb-16">
+          {/* Header */}
+          <div className="pt-12 sm:pt-16 pb-8 text-center px-4">
+            <h1 className="text-3xl sm:text-4xl font-bold text-apple-gray-600 tracking-tight">
+              만 나이 계산기
+            </h1>
+            <p className="text-apple-gray-400 mt-2 text-sm sm:text-base font-light">
+              생년월일을 입력하면 만 나이와 한국 나이를 알려드립��다
+            </p>
+          </div>
+
+          {/* Date Input */}
+          <div className="max-w-md mx-auto px-4 mb-8">
+            <Card className="p-6 sm:p-8">
+              <label className="block text-sm font-medium text-apple-gray-500 mb-3">
+                생년월일
+              </label>
+              <input
+                type="date"
+                value={birthDate}
+                onChange={handleDateChange}
+                max={maxDate}
+                min="1900-01-01"
+                className="w-full px-4 py-3.5 rounded-xl bg-[#f5f5f7] border-0
+                           text-apple-gray-600 text-lg font-medium
+                           focus:outline-none focus:ring-2 focus:ring-apple-blue/30
+                           transition-all duration-200
+                           appearance-none cursor-pointer"
+              />
+              <label className="block text-sm font-medium text-apple-gray-500 mt-4 mb-3">
+                태어난 시간 <span className="text-apple-gray-300 font-normal">(사주팔자용, 선택사항)</span>
+              </label>
+              <input
+                type="time"
+                value={birthTime}
+                onChange={handleTimeChange}
+                className="w-full px-4 py-3.5 rounded-xl bg-[#f5f5f7] border-0
+                           text-apple-gray-600 text-lg font-medium
+                           focus:outline-none focus:ring-2 focus:ring-apple-blue/30
+                           transition-all duration-200
+                           appearance-none cursor-pointer"
+              />
+              {birthDate && result && (
+                <p className="text-xs text-apple-gray-400 mt-3 text-center">
+                  {formatDate(result.birthDateObj)} ({result.birthDayOfWeek})
+                  {birthTime && ` ${birthTime}`}
+                </p>
+              )}
+            </Card>
+          </div>
+
+          {/* Results */}
+          {result && (
+            <div key={animationKey} className="max-w-xl mx-auto px-4">
+
+              {/* Birthday message */}
+              {result.isBirthday && (
+                <div className="mb-6 animate-scale-in">
+                  <Card className="p-6 text-center bg-gradient-to-r from-apple-pink/10 to-apple-purple/10 border-apple-pink/20">
+                    <p className="text-4xl mb-2">🎂</p>
+                    <p className="text-lg font-semibold text-apple-gray-600">
+                      생일 축하합니다!
+                    </p>
+                    <p className="text-sm text-apple-gray-400 mt-1">
+                      오늘은 당신의 특별한 날이에요
+                    </p>
+                  </Card>
+                </div>
+              )}
+
+              {/* Main age display */}
+              <div className="mb-6 animate-scale-in">
+                <Card className="p-8 sm:p-10">
+                  <div className="grid grid-cols-2 gap-6">
+                    {/* 만 나이 */}
+                    <div className="text-center">
+                      <p className="text-sm text-apple-gray-400 font-medium tracking-widest uppercase mb-3">
+                        만 나이
+                      </p>
+                      <div className="flex items-baseline justify-center gap-1">
+                        <span className="text-5xl sm:text-6xl font-bold bg-gradient-to-r from-apple-blue to-apple-indigo bg-clip-text text-transparent">
+                          {result.age}
+                        </span>
+                        <span className="text-xl sm:text-2xl font-medium text-apple-gray-400">세</span>
+                      </div>
+                      <p className="text-xs text-apple-gray-400 mt-2">
+                        {result.age}년 {result.months}개월 {result.days}일
+                      </p>
+                    </div>
+                    {/* 한국 나이 */}
+                    <div className="text-center border-l border-apple-gray-200 pl-6">
+                      <p className="text-sm text-apple-gray-400 font-medium tracking-widest uppercase mb-3">
+                        한국 나이
+                      </p>
+                      <div className="flex items-baseline justify-center gap-1">
+                        <span className="text-5xl sm:text-6xl font-bold bg-gradient-to-r from-apple-orange to-apple-pink bg-clip-text text-transparent">
+                          {result.koreanAge}
+                        </span>
+                        <span className="text-xl sm:text-2xl font-medium text-apple-gray-400">세</span>
+                      </div>
+                      <p className="text-xs text-apple-gray-400 mt-2">
+                        태어나면 1살, 새해 +1살
+                      </p>
+                    </div>
+                  </div>
+                </Card>
+              </div>
+
+              {/* Birthday countdown with ring */}
+              {!result.isBirthday && (
+                <div className="mb-6 animate-fade-in-up delay-100">
+                  <Card className="p-6 sm:p-8">
+                    <div className="flex items-center gap-6">
+                      <div className="relative flex-shrink-0">
+                        <BirthdayProgress
+                          daysUntil={result.daysUntilBirthday}
+                          totalDaysInYear={result.totalDaysInYear}
+                        />
+                      </div>
+                      <div>
+                        <p className="text-sm text-apple-gray-400 font-medium mb-1">
+                          다음 생일까지
+                        </p>
+                        <p className="text-3xl font-bold text-apple-gray-600">
+                          {result.daysUntilBirthday}<span className="text-lg font-medium text-apple-gray-400 ml-1">일</span>
+                        </p>
+                        <p className="text-xs text-apple-gray-400 mt-1">
+                          {result.age + 1}세가 되는 날
+                        </p>
+                      </div>
+                    </div>
+                  </Card>
+                </div>
+              )}
+
+              {/* Stats grid */}
+              <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-6">
+                <StatCard
+                  icon="📅"
+                  label="태어난 지"
+                  value={result.totalDays.toLocaleString()}
+                  unit="일째"
+                  color="text-apple-orange"
+                  delay="delay-200"
+                />
+                <StatCard
+                  icon="📆"
+                  label="지나온 주"
+                  value={result.totalWeeks.toLocaleString()}
+                  unit="주"
+                  color="text-apple-green"
+                  delay="delay-300"
+                />
+              </div>
+
+              {/* Additional info */}
+              <div className="animate-fade-in-up delay-400">
+                <Card className="p-5 sm:p-6">
+                  <p className="text-sm font-medium text-apple-gray-500 mb-4">추가 정보</p>
+                  <div className="space-y-3">
+                    <InfoRow label="태어난 요일" value={result.birthDayOfWeek} />
+                    <InfoRow label="별자리" value={result.zodiac} />
+                    <InfoRow label="띠" value={result.chineseZodiac} />
+                  </div>
+                </Card>
+              </div>
+
+              {/* 사주팔자 */}
+              <div className="mt-6 animate-fade-in-up delay-400">
+                <Card className="p-6 sm:p-8">
+                  <div className="text-center mb-6">
+                    <p className="text-sm font-semibold text-apple-gray-500 tracking-wider uppercase mb-1">사주팔자</p>
+                    <p className="text-xs text-apple-gray-400">四柱八字 · 네 기둥 여덟 글자</p>
+                  </div>
+                  <SajuDisplay saju={result.saju} />
+                </Card>
+              </div>
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!birthDate && (
+            <div className="max-w-md mx-auto px-4 text-center animate-fade-in-up">
+              <Card className="p-10">
+                <p className="text-5xl mb-4">🗓️</p>
+                <p className="text-apple-gray-400 text-sm leading-relaxed">
+                  위에서 생년월일을 선택하면<br />
+                  만 나이와 다양한 정보를 확인할 수 있어요
+                </p>
+              </Card>
+            </div>
+          )}
+
+          {/* Footer */}
+          <div className="text-center mt-12 px-4">
+            <p className="text-xs text-apple-gray-300">
+              만 나이 = 국제 표준 | 한국 나이 = 태어나면 1살, 새해마다 +1살
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    function InfoRow({ label, value }) {
+      return (
+        <div className="flex items-center justify-between py-1.5">
+          <span className="text-sm text-apple-gray-400">{label}</span>
+          <span className="text-sm font-medium text-apple-gray-600">{value}</span>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🚀 App Component
+    // ========================================
+
+    function App() {
+      return <AgeCalculator />;
+    }
+
+    // ========================================
+    // Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

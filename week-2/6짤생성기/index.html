@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>짤 생성기 - Meme Generator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Noto Sans KR"', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    * { font-family: 'Noto Sans KR', sans-serif; }
+    input[type="color"] {
+      -webkit-appearance: none;
+      border: none;
+      padding: 0;
+      cursor: pointer;
+    }
+    input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
+    input[type="color"]::-webkit-color-swatch { border: 1px solid #d1d5db; border-radius: 4px; }
+    input[type="range"] { accent-color: #f59e0b; }
+    .controls-panel::-webkit-scrollbar { width: 6px; }
+    .controls-panel::-webkit-scrollbar-track { background: #fef3c7; border-radius: 3px; }
+    .controls-panel::-webkit-scrollbar-thumb { background: #f59e0b; border-radius: 3px; }
+  </style>
+</head>
+<body class="bg-amber-50 min-h-screen">
+  <div id="root"></div>
+  <script type="text/babel">
+    // ========================================
+    // React Hooks Destructuring
+    // ========================================
+    const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+    // ========================================
+    // Constants & Helpers
+    // ========================================
+    const BUBBLE_TYPES = [
+      { id: 'rounded', label: '둥근 말풍선', icon: '💬' },
+      { id: 'thought', label: '생각 말풍선', icon: '💭' },
+      { id: 'explosion', label: '폭발 말풍선', icon: '💥' },
+      { id: 'rectangle', label: '사각 말풍선', icon: '🗨️' },
+    ];
+
+    const CANVAS_PRESETS = [
+      { label: '기본', w: 600, h: 500 },
+      { label: '정사각형', w: 600, h: 600 },
+      { label: '가로형 (16:9)', w: 800, h: 450 },
+      { label: '세로형 (스토리)', w: 450, h: 800 },
+    ];
+
+    const BG_GEN_TYPES = [
+      { id: 'gradient-tb',     label: '그라데이션 (상↓하)', icon: '🌈' },
+      { id: 'gradient-diag',   label: '대각 그라데이션',    icon: '↗️' },
+      { id: 'gradient-radial', label: '방사형 그라데이션',  icon: '🔵' },
+      { id: 'dots',            label: '도트 패턴',          icon: '⚫' },
+      { id: 'stripes-h',       label: '가로 줄무늬',        icon: '〰️' },
+      { id: 'stripes-diag',    label: '대각 줄무늬',        icon: '💈' },
+      { id: 'checker',         label: '체크무늬',           icon: '♟️' },
+      { id: 'grid',            label: '격자',               icon: '🔲' },
+    ];
+
+    const BG_COLORS = [
+      { color: '#ffffff', label: '흰색' },
+      { color: '#000000', label: '검정' },
+      { color: '#fbbf24', label: '노랑' },
+      { color: '#93c5fd', label: '하늘' },
+      { color: '#f9a8d4', label: '핑크' },
+      { color: '#d1d5db', label: '회색' },
+    ];
+
+    const MAX_BUBBLES = 5;
+
+    function createDefaultBubble(index) {
+      const px = 30 + (index * 10) % 40;
+      const py = 20 + (index * 10) % 30;
+      return {
+        id: Date.now() + Math.random(),
+        type: 'rounded',
+        text: '여기에 텍스트 입력',
+        fontSize: 24,
+        textColor: '#000000',
+        fillColor: '#ffffff',
+        borderColor: '#000000',
+        borderWidth: 2,
+        posX: px,
+        posY: py,
+        width: 50,
+        tailX: px + 8,
+        tailY: py + 28,
+      };
+    }
+
+    // ========================================
+    // 🎨 Design System Components
+    // ========================================
+    function Button({ children, onClick, variant = 'primary', size = 'md', disabled = false, className = '' }) {
+      const base = 'inline-flex items-center justify-center font-semibold rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed';
+      const variants = {
+        primary: 'bg-amber-500 hover:bg-amber-600 text-white focus:ring-amber-400 shadow-sm hover:shadow',
+        secondary: 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 focus:ring-amber-400',
+        danger: 'bg-red-500 hover:bg-red-600 text-white focus:ring-red-400',
+        ghost: 'bg-transparent hover:bg-amber-100 text-amber-700 focus:ring-amber-400',
+      };
+      const sizes = {
+        sm: 'px-2.5 py-1 text-xs gap-1',
+        md: 'px-4 py-2 text-sm gap-2',
+        lg: 'px-6 py-3 text-base gap-2',
+      };
+      return (
+        <button onClick={onClick} disabled={disabled} className={`${base} ${variants[variant]} ${sizes[size]} ${className}`}>
+          {children}
+        </button>
+      );
+    }
+
+    function Card({ children, className = '' }) {
+      return <div className={`bg-white rounded-xl shadow-sm border border-amber-100 ${className}`}>{children}</div>;
+    }
+
+    function SliderControl({ label, value, onChange, min, max, step = 1, suffix = '' }) {
+      return (
+        <div className="flex flex-col gap-1">
+          <div className="flex justify-between items-center">
+            <label className="text-xs font-medium text-gray-600">{label}</label>
+            <span className="text-xs font-mono text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">{value}{suffix}</span>
+          </div>
+          <input type="range" min={min} max={max} step={step} value={value}
+            onChange={(e) => onChange(Number(e.target.value))}
+            className="w-full h-1.5 rounded-full appearance-none cursor-pointer" />
+        </div>
+      );
+    }
+
+    function ColorControl({ label, value, onChange }) {
+      return (
+        <div className="flex items-center gap-2">
+          <label className="text-xs font-medium text-gray-600 whitespace-nowrap">{label}</label>
+          <input type="color" value={value} onChange={(e) => onChange(e.target.value)}
+            className="w-7 h-7 rounded cursor-pointer border border-gray-200" />
+          <span className="text-xs font-mono text-gray-400">{value}</span>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🧩 Bubble Editor Component
+    // ========================================
+    function BubbleEditor({ bubble, index, total, isExpanded, onToggle, onUpdate, onDelete, onMove }) {
+      const charCount = bubble.text.length;
+      return (
+        <div className="border border-amber-200 rounded-lg overflow-hidden bg-white">
+          <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 cursor-pointer select-none" onClick={onToggle}>
+            <span className="text-lg">{BUBBLE_TYPES.find(t => t.id === bubble.type)?.icon}</span>
+            <span className="text-sm font-semibold text-gray-700 flex-1 truncate">
+              {bubble.text.substring(0, 15)}{bubble.text.length > 15 ? '...' : ''}
+            </span>
+            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              <button onClick={() => onMove('up')} disabled={index === 0}
+                className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-amber-600 disabled:opacity-30 text-xs">
+                ▲
+              </button>
+              <button onClick={() => onMove('down')} disabled={index === total - 1}
+                className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-amber-600 disabled:opacity-30 text-xs">
+                ▼
+              </button>
+              <button onClick={onDelete}
+                className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-red-500 text-sm">
+                ✕
+              </button>
+            </div>
+            <span className={`text-xs transition-transform ${isExpanded ? 'rotate-180' : ''}`}>▼</span>
+          </div>
+
+          {isExpanded && (
+            <div className="p-3 space-y-3 border-t border-amber-100">
+              {/* Bubble type */}
+              <div>
+                <label className="text-xs font-medium text-gray-600 block mb-1.5">말풍선 모양</label>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {BUBBLE_TYPES.map(bt => (
+                    <button key={bt.id} onClick={() => onUpdate('type', bt.id)}
+                      className={`text-xs py-1.5 px-2 rounded-md border transition-all ${
+                        bubble.type === bt.id
+                          ? 'border-amber-400 bg-amber-50 text-amber-700 font-semibold'
+                          : 'border-gray-200 text-gray-500 hover:border-amber-300'
+                      }`}>
+                      {bt.icon} {bt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Text */}
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs font-medium text-gray-600">텍스트</label>
+                  <span className="text-xs text-gray-400">{charCount}자</span>
+                </div>
+                <textarea value={bubble.text} onChange={(e) => onUpdate('text', e.target.value)}
+                  rows={2} maxLength={100}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-300 focus:border-amber-300 resize-none" />
+              </div>
+
+              {/* Font size */}
+              <SliderControl label="글자 크기" value={bubble.fontSize} onChange={(v) => onUpdate('fontSize', v)}
+                min={12} max={60} suffix="px" />
+
+              {/* Colors */}
+              <div className="grid grid-cols-1 gap-2">
+                <ColorControl label="글자 색" value={bubble.textColor} onChange={(v) => onUpdate('textColor', v)} />
+                <ColorControl label="배경 색" value={bubble.fillColor} onChange={(v) => onUpdate('fillColor', v)} />
+                <ColorControl label="테두리 색" value={bubble.borderColor} onChange={(v) => onUpdate('borderColor', v)} />
+              </div>
+
+              {/* Border width */}
+              <SliderControl label="테두리 두께" value={bubble.borderWidth} onChange={(v) => onUpdate('borderWidth', v)}
+                min={1} max={6} suffix="px" />
+
+              {/* Position */}
+              <SliderControl label="가로 위치 (X)" value={bubble.posX} onChange={(v) => onUpdate('posX', v)}
+                min={0} max={100} suffix="%" />
+              <SliderControl label="세로 위치 (Y)" value={bubble.posY} onChange={(v) => onUpdate('posY', v)}
+                min={0} max={100} suffix="%" />
+
+              {/* Width */}
+              <SliderControl label="말풍선 너비" value={bubble.width} onChange={(v) => onUpdate('width', v)}
+                min={15} max={90} suffix="%" />
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🎨 Canvas Drawing Functions
+    // ========================================
+
+    function drawRoundedRect(ctx, x, y, w, h, r) {
+      r = Math.min(r, w / 2, h / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    // 버블 경계에서 꼬리 방향으로 가는 출발점 계산
+    function getTailExitPoint(bx, by, bw, bh, tailX, tailY) {
+      const cx = bx + bw / 2, cy = by + bh / 2;
+      const dx = tailX - cx, dy = tailY - cy;
+      if (Math.abs(dx) < 0.1 && Math.abs(dy) < 0.1) return { x: cx, y: by + bh };
+      const t = (Math.abs(dy) * (bw / 2) >= Math.abs(dx) * (bh / 2))
+        ? (bh / 2) / Math.abs(dy)
+        : (bw / 2) / Math.abs(dx);
+      return { x: cx + dx * t, y: cy + dy * t };
+    }
+
+    function drawSpikyBubble(ctx, cx, cy, outerRx, outerRy, innerRx, innerRy, numPoints) {
+      const step = Math.PI / numPoints;
+      ctx.beginPath();
+      for (let i = 0; i < numPoints * 2; i++) {
+        const rx = i % 2 === 0 ? outerRx : innerRx;
+        const ry = i % 2 === 0 ? outerRy : innerRy;
+        const angle = i * step - Math.PI / 2;
+        const px = cx + rx * Math.cos(angle);
+        const py = cy + ry * Math.sin(angle);
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+    }
+
+    function wrapText(ctx, text, maxWidth) {
+      const lines = [];
+      const paragraphs = text.split('\n');
+      for (const para of paragraphs) {
+        if (para === '') { lines.push(''); continue; }
+        let cur = '';
+        for (const ch of para) {
+          const test = cur + ch;
+          if (ctx.measureText(test).width > maxWidth && cur.length > 0) {
+            lines.push(cur); cur = ch;
+          } else { cur = test; }
+        }
+        if (cur) lines.push(cur);
+      }
+      return lines;
+    }
+
+    function drawBubbleOnCanvas(ctx, bubble, canvasW, canvasH, showHandles = false) {
+      const bw = (bubble.width / 100) * canvasW;
+      const bx = (bubble.posX / 100) * canvasW - bw / 2;
+      const by = (bubble.posY / 100) * canvasH;
+
+      ctx.font = `bold ${bubble.fontSize}px BlackHanSans, "Noto Sans KR", sans-serif`;
+      const lines = wrapText(ctx, bubble.text, Math.max(bw - 30, 20));
+      const lineHeight = bubble.fontSize * 1.35;
+      const bh = lines.length * lineHeight + 36;
+      const radius = 16;
+
+      const tailTipX = ((bubble.tailX ?? bubble.posX + 8) / 100) * canvasW;
+      const tailTipY = ((bubble.tailY ?? bubble.posY + 28) / 100) * canvasH;
+
+      ctx.save();
+
+      if (bubble.type === 'explosion') {
+        // 폭발형: 꼬리 없음
+        drawSpikyBubble(ctx, bx + bw/2, by + bh/2, bw/2 + 15, bh/2 + 15, bw/2 - 5, bh/2 - 5, 14);
+        ctx.fillStyle = bubble.fillColor; ctx.fill();
+        ctx.strokeStyle = bubble.borderColor; ctx.lineWidth = bubble.borderWidth; ctx.lineJoin = 'round'; ctx.stroke();
+      } else {
+        const exit = getTailExitPoint(bx, by, bw, bh, tailTipX, tailTipY);
+        const angle = Math.atan2(tailTipY - exit.y, tailTipX - exit.x);
+        const perp = angle + Math.PI / 2;
+        const tw = 10;
+
+        if (bubble.type === 'thought') {
+          // 생각형: 동그라미 꼬리
+          const dx = tailTipX - exit.x, dy = tailTipY - exit.y;
+          const dist = Math.hypot(dx, dy) || 1;
+          const nx = dx / dist, ny = dy / dist;
+          [[0.25, 9], [0.55, 6], [0.82, 4]].forEach(([t, r]) => {
+            ctx.beginPath();
+            ctx.arc(exit.x + nx*dist*t, exit.y + ny*dist*t, r, 0, Math.PI*2);
+            ctx.fillStyle = bubble.fillColor; ctx.fill();
+            ctx.strokeStyle = bubble.borderColor; ctx.lineWidth = bubble.borderWidth; ctx.stroke();
+          });
+        } else {
+          // 둥근/사각형: 삼각형 꼬리 (body 뒤에 먼저 그려서 겹치게)
+          ctx.beginPath();
+          ctx.moveTo(exit.x + Math.cos(perp)*tw, exit.y + Math.sin(perp)*tw);
+          ctx.lineTo(tailTipX, tailTipY);
+          ctx.lineTo(exit.x - Math.cos(perp)*tw, exit.y - Math.sin(perp)*tw);
+          ctx.closePath();
+          ctx.fillStyle = bubble.fillColor; ctx.fill();
+          ctx.strokeStyle = bubble.borderColor; ctx.lineWidth = bubble.borderWidth; ctx.stroke();
+        }
+
+        // 버블 본체 (꼬리 위에 덮어 경계선 가림)
+        if (bubble.type === 'rounded') {
+          drawRoundedRect(ctx, bx, by, bw, bh, radius);
+        } else {
+          ctx.beginPath(); ctx.rect(bx, by, bw, bh);
+        }
+        ctx.fillStyle = bubble.fillColor; ctx.fill();
+        ctx.strokeStyle = bubble.borderColor; ctx.lineWidth = bubble.borderWidth; ctx.lineJoin = 'round'; ctx.stroke();
+      }
+
+      // 텍스트
+      ctx.fillStyle = bubble.textColor;
+      ctx.font = `bold ${bubble.fontSize}px BlackHanSans, "Noto Sans KR", sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const textStartY = by + 18 + lineHeight / 2;
+      lines.forEach((line, i) => ctx.fillText(line, bx + bw/2, textStartY + i * lineHeight));
+
+      // 드래그 핸들 (다운로드 시 숨김)
+      if (showHandles) {
+        // 버블 이동 핸들 (노란색 ✥)
+        const hx = bx + bw/2, hy = by + bh/2;
+        ctx.beginPath(); ctx.arc(hx, hy, 10, 0, Math.PI*2);
+        ctx.fillStyle = 'rgba(251,191,36,0.9)'; ctx.fill();
+        ctx.strokeStyle = '#b45309'; ctx.lineWidth = 2; ctx.stroke();
+        ctx.strokeStyle = '#78350f'; ctx.lineWidth = 1.5;
+        [[-6,0],[6,0],[0,-6],[0,6]].forEach(([dx,dy]) => {
+          ctx.beginPath(); ctx.moveTo(hx,hy); ctx.lineTo(hx+dx,hy+dy); ctx.stroke();
+        });
+
+        // 꼬리 핸들 (파란색 ◆) - explosion 제외
+        if (bubble.type !== 'explosion') {
+          ctx.beginPath(); ctx.arc(tailTipX, tailTipY, 10, 0, Math.PI*2);
+          ctx.fillStyle = 'rgba(96,165,250,0.9)'; ctx.fill();
+          ctx.strokeStyle = '#1d4ed8'; ctx.lineWidth = 2; ctx.stroke();
+          ctx.fillStyle = '#1e3a8a';
+          ctx.beginPath();
+          ctx.moveTo(tailTipX, tailTipY-6); ctx.lineTo(tailTipX+6, tailTipY);
+          ctx.lineTo(tailTipX, tailTipY+6); ctx.lineTo(tailTipX-6, tailTipY);
+          ctx.closePath(); ctx.fill();
+        }
+      }
+
+      ctx.restore();
+      return { bx, by, bw, bh };
+    }
+
+    // ========================================
+    // 📄 App Component
+    // ========================================
+    function App() {
+      const canvasRef = useRef(null);
+      const fileInputRef = useRef(null);
+
+      const [canvasSize, setCanvasSize] = useState({ w: 600, h: 500 });
+      const [bgColor, setBgColor] = useState('#ffffff');
+      const [bgImage, setBgImage] = useState(null);
+      const [bgImageObj, setBgImageObj] = useState(null);
+      const [bubbles, setBubbles] = useState([createDefaultBubble(0)]);
+      const [expandedBubble, setExpandedBubble] = useState(0);
+      const [fontLoaded, setFontLoaded] = useState(false);
+      const [dragging, setDragging] = useState(null);
+      const [bgGenType, setBgGenType] = useState('gradient-tb');
+      const [bgGenColor1, setBgGenColor1] = useState('#ff6b6b');
+      const [bgGenColor2, setBgGenColor2] = useState('#4ecdc4');
+
+      // Load font for canvas
+      useEffect(() => {
+        const font = new FontFace('BlackHanSans',
+          'url(https://fonts.gstatic.com/s/blackhansans/v17/ea8Aad44WunzF9a-dL6toA8r8nqVIXSkH-Ao.woff2)');
+        font.load().then(f => {
+          document.fonts.add(f);
+          setFontLoaded(true);
+        }).catch(() => {
+          setFontLoaded(true); // proceed with fallback
+        });
+      }, []);
+
+      // Load background image
+      useEffect(() => {
+        if (!bgImage) { setBgImageObj(null); return; }
+        const img = new Image();
+        img.onload = () => setBgImageObj(img);
+        img.src = bgImage;
+      }, [bgImage]);
+
+      // Redraw canvas
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const { w, h } = canvasSize;
+        canvas.width = w;
+        canvas.height = h;
+
+        // Background
+        ctx.fillStyle = bgColor;
+        ctx.fillRect(0, 0, w, h);
+
+        // Background image
+        if (bgImageObj) {
+          const imgRatio = bgImageObj.width / bgImageObj.height;
+          const canvasRatio = w / h;
+          let drawW, drawH, drawX, drawY;
+          if (imgRatio > canvasRatio) {
+            drawH = h;
+            drawW = h * imgRatio;
+            drawX = (w - drawW) / 2;
+            drawY = 0;
+          } else {
+            drawW = w;
+            drawH = w / imgRatio;
+            drawX = 0;
+            drawY = (h - drawH) / 2;
+          }
+          ctx.drawImage(bgImageObj, drawX, drawY, drawW, drawH);
+        }
+
+        // Draw bubbles (핸들 표시)
+        bubbles.forEach(bubble => {
+          drawBubbleOnCanvas(ctx, bubble, w, h, true);
+        });
+      }, [canvasSize, bgColor, bgImageObj, bubbles, fontLoaded]);
+
+      const handleImageUpload = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => setBgImage(ev.target.result);
+        reader.readAsDataURL(file);
+      };
+
+      const addBubble = () => {
+        if (bubbles.length >= MAX_BUBBLES) return;
+        const newBubble = createDefaultBubble(bubbles.length);
+        setBubbles(prev => [...prev, newBubble]);
+        setExpandedBubble(bubbles.length);
+      };
+
+      const updateBubble = (index, key, value) => {
+        setBubbles(prev => prev.map((b, i) => i === index ? { ...b, [key]: value } : b));
+      };
+
+      const deleteBubble = (index) => {
+        setBubbles(prev => prev.filter((_, i) => i !== index));
+        setExpandedBubble(null);
+      };
+
+      const moveBubble = (index, direction) => {
+        const newIndex = direction === 'up' ? index - 1 : index + 1;
+        if (newIndex < 0 || newIndex >= bubbles.length) return;
+        setBubbles(prev => {
+          const arr = [...prev];
+          [arr[index], arr[newIndex]] = [arr[newIndex], arr[index]];
+          return arr;
+        });
+        setExpandedBubble(newIndex);
+      };
+
+      // 캔버스 좌표 → 실제 픽셀 좌표 변환 (display 크기 vs 실제 크기 보정)
+      const getCanvasCoords = (e) => {
+        const canvas = canvasRef.current;
+        const rect = canvas.getBoundingClientRect();
+        return {
+          x: (e.clientX - rect.left) * (canvasSize.w / rect.width),
+          y: (e.clientY - rect.top)  * (canvasSize.h / rect.height),
+        };
+      };
+
+      const getBubbleGeom = (bubble) => {
+        const canvas = canvasRef.current;
+        if (!canvas) return null;
+        const ctx = canvas.getContext('2d');
+        const { w, h } = canvasSize;
+        const bw = (bubble.width / 100) * w;
+        const bx = (bubble.posX / 100) * w - bw / 2;
+        const by = (bubble.posY / 100) * h;
+        ctx.font = `bold ${bubble.fontSize}px BlackHanSans, "Noto Sans KR", sans-serif`;
+        const lines = wrapText(ctx, bubble.text, Math.max(bw - 30, 20));
+        const bh = lines.length * bubble.fontSize * 1.35 + 36;
+        return { bx, by, bw, bh };
+      };
+
+      const handleMouseDown = useCallback((e) => {
+        const pos = getCanvasCoords(e);
+        const { w, h } = canvasSize;
+
+        // 꼬리 핸들 먼저 체크 (작은 타겟이므로 우선순위 높게)
+        for (let i = bubbles.length - 1; i >= 0; i--) {
+          const b = bubbles[i];
+          if (b.type === 'explosion') continue;
+          const tx = ((b.tailX ?? b.posX + 8) / 100) * w;
+          const ty = ((b.tailY ?? b.posY + 28) / 100) * h;
+          if (Math.hypot(pos.x - tx, pos.y - ty) <= 16) {
+            setDragging({ type: 'tail', index: i,
+              startX: pos.x, startY: pos.y,
+              origX: b.tailX ?? b.posX + 8,
+              origY: b.tailY ?? b.posY + 28 });
+            return;
+          }
+        }
+
+        // 버블 본체 체크
+        for (let i = bubbles.length - 1; i >= 0; i--) {
+          const g = getBubbleGeom(bubbles[i]);
+          if (!g) continue;
+          if (pos.x >= g.bx && pos.x <= g.bx + g.bw && pos.y >= g.by && pos.y <= g.by + g.bh) {
+            setDragging({ type: 'bubble', index: i,
+              startX: pos.x, startY: pos.y,
+              origX: bubbles[i].posX, origY: bubbles[i].posY });
+            return;
+          }
+        }
+      }, [bubbles, canvasSize]);
+
+      const handleMouseMove = useCallback((e) => {
+        if (!dragging) return;
+        const pos = getCanvasCoords(e);
+        const { w, h } = canvasSize;
+        const dx = ((pos.x - dragging.startX) / w) * 100;
+        const dy = ((pos.y - dragging.startY) / h) * 100;
+
+        if (dragging.type === 'bubble') {
+          setBubbles(prev => prev.map((b, i) => i !== dragging.index ? b : {
+            ...b,
+            posX: Math.max(0, Math.min(100, dragging.origX + dx)),
+            posY: Math.max(0, Math.min(100, dragging.origY + dy)),
+          }));
+        } else if (dragging.type === 'tail') {
+          setBubbles(prev => prev.map((b, i) => i !== dragging.index ? b : {
+            ...b,
+            tailX: Math.max(0, Math.min(100, dragging.origX + dx)),
+            tailY: Math.max(0, Math.min(100, dragging.origY + dy)),
+          }));
+        }
+      }, [dragging, canvasSize]);
+
+      const handleMouseUp = useCallback(() => setDragging(null), []);
+
+      const resetAll = () => {
+        setBubbles([createDefaultBubble(0)]);
+        setBgColor('#ffffff');
+        setBgImage(null);
+        setExpandedBubble(0);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      };
+
+      const generateBgFromCanvas = () => {
+        const { w, h } = canvasSize;
+        const off = document.createElement('canvas');
+        off.width = w; off.height = h;
+        const ctx = off.getContext('2d');
+        const c1 = bgGenColor1, c2 = bgGenColor2;
+
+        if (bgGenType === 'gradient-tb') {
+          const g = ctx.createLinearGradient(0, 0, 0, h);
+          g.addColorStop(0, c1); g.addColorStop(1, c2);
+          ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+
+        } else if (bgGenType === 'gradient-diag') {
+          const g = ctx.createLinearGradient(0, 0, w, h);
+          g.addColorStop(0, c1); g.addColorStop(1, c2);
+          ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+
+        } else if (bgGenType === 'gradient-radial') {
+          const g = ctx.createRadialGradient(w/2, h/2, 0, w/2, h/2, Math.max(w,h)/2);
+          g.addColorStop(0, c1); g.addColorStop(1, c2);
+          ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+
+        } else if (bgGenType === 'dots') {
+          ctx.fillStyle = c2; ctx.fillRect(0, 0, w, h);
+          const sp = 28, r = 6;
+          ctx.fillStyle = c1;
+          for (let x = sp/2; x < w; x += sp)
+            for (let y = sp/2; y < h; y += sp) {
+              ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+            }
+
+        } else if (bgGenType === 'stripes-h') {
+          const sw = 28;
+          for (let y = 0; y < h; y += sw) {
+            ctx.fillStyle = Math.floor(y/sw) % 2 === 0 ? c1 : c2;
+            ctx.fillRect(0, y, w, sw);
+          }
+
+        } else if (bgGenType === 'stripes-diag') {
+          ctx.fillStyle = c1; ctx.fillRect(0, 0, w, h);
+          ctx.fillStyle = c2;
+          const sw = 32;
+          for (let i = -(w+h); i < w+h; i += sw*2) {
+            ctx.beginPath();
+            ctx.moveTo(i, 0); ctx.lineTo(i+h, h);
+            ctx.lineTo(i+h+sw, h); ctx.lineTo(i+sw, 0);
+            ctx.closePath(); ctx.fill();
+          }
+
+        } else if (bgGenType === 'checker') {
+          const cs = 40;
+          for (let x = 0; x < w; x += cs)
+            for (let y = 0; y < h; y += cs) {
+              ctx.fillStyle = (Math.floor(x/cs)+Math.floor(y/cs)) % 2 === 0 ? c1 : c2;
+              ctx.fillRect(x, y, cs, cs);
+            }
+
+        } else if (bgGenType === 'grid') {
+          ctx.fillStyle = c2; ctx.fillRect(0, 0, w, h);
+          ctx.strokeStyle = c1; ctx.lineWidth = 1.5;
+          const gs = 40;
+          for (let x = 0; x <= w; x += gs) {
+            ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+          }
+          for (let y = 0; y <= h; y += gs) {
+            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+          }
+        }
+
+        setBgImage(off.toDataURL('image/png'));
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      };
+
+      const downloadCanvas = (format) => {
+        const { w, h } = canvasSize;
+        // 핸들 없는 오프스크린 캔버스로 내보내기
+        const off = document.createElement('canvas');
+        off.width = w; off.height = h;
+        const ctx = off.getContext('2d');
+
+        ctx.fillStyle = bgColor;
+        ctx.fillRect(0, 0, w, h);
+
+        if (bgImageObj) {
+          const ir = bgImageObj.width / bgImageObj.height;
+          const cr = w / h;
+          let dw, dh, dx, dy;
+          if (ir > cr) { dh = h; dw = h*ir; dx = (w-dw)/2; dy = 0; }
+          else          { dw = w; dh = w/ir; dx = 0; dy = (h-dh)/2; }
+          ctx.drawImage(bgImageObj, dx, dy, dw, dh);
+        }
+
+        bubbles.forEach(b => drawBubbleOnCanvas(ctx, b, w, h, false));
+
+        const mimeType = format === 'jpg' ? 'image/jpeg' : 'image/png';
+        const ext = format === 'jpg' ? 'jpg' : 'png';
+        const link = document.createElement('a');
+        link.download = `meme_${Date.now()}.${ext}`;
+        link.href = off.toDataURL(mimeType, 0.95);
+        link.click();
+      };
+
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50">
+          {/* Header */}
+          <header className="bg-gradient-to-r from-amber-500 to-orange-500 shadow-lg">
+            <div className="max-w-7xl mx-auto px-4 py-4 flex items-center gap-3">
+              <span className="text-3xl">🖼️</span>
+              <div>
+                <h1 className="text-xl md:text-2xl font-black text-white tracking-tight">짤 생성기</h1>
+                <p className="text-amber-100 text-xs md:text-sm">말풍선을 추가하고 나만의 짤을 만들어보세요!</p>
+              </div>
+            </div>
+          </header>
+
+          {/* Main Content */}
+          <main className="max-w-7xl mx-auto px-4 py-6">
+            <div className="flex flex-col lg:flex-row gap-6">
+
+              {/* Left: Controls Panel */}
+              <div className="w-full lg:w-[380px] flex-shrink-0">
+                <div className="controls-panel space-y-4 lg:max-h-[calc(100vh-140px)] lg:overflow-y-auto lg:pr-2">
+
+                  {/* Canvas Size */}
+                  <Card className="p-4">
+                    <h2 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
+                      <span className="w-6 h-6 bg-amber-100 rounded-md flex items-center justify-center text-sm">📐</span>
+                      캔버스 크기
+                    </h2>
+                    <div className="grid grid-cols-2 gap-2">
+                      {CANVAS_PRESETS.map(preset => (
+                        <button key={preset.label} onClick={() => setCanvasSize({ w: preset.w, h: preset.h })}
+                          className={`text-xs py-2 px-3 rounded-lg border transition-all ${
+                            canvasSize.w === preset.w && canvasSize.h === preset.h
+                              ? 'border-amber-400 bg-amber-50 text-amber-700 font-bold shadow-sm'
+                              : 'border-gray-200 text-gray-500 hover:border-amber-300 hover:bg-amber-50/50'
+                          }`}>
+                          {preset.label}
+                          <span className="block text-[10px] text-gray-400 mt-0.5">{preset.w}x{preset.h}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </Card>
+
+                  {/* Background */}
+                  <Card className="p-4">
+                    <h2 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
+                      <span className="w-6 h-6 bg-amber-100 rounded-md flex items-center justify-center text-sm">🎨</span>
+                      배경 설정
+                    </h2>
+
+                    <div className="space-y-3">
+                      {/* Color presets */}
+                      <div>
+                        <label className="text-xs font-medium text-gray-600 block mb-1.5">배경 색상</label>
+                        <div className="flex gap-2 flex-wrap">
+                          {BG_COLORS.map(bg => (
+                            <button key={bg.color} onClick={() => { setBgColor(bg.color); setBgImage(null); if(fileInputRef.current) fileInputRef.current.value=''; }}
+                              title={bg.label}
+                              className={`w-8 h-8 rounded-lg border-2 transition-all shadow-sm hover:scale-110 ${
+                                bgColor === bg.color && !bgImage
+                                  ? 'border-amber-500 ring-2 ring-amber-200 scale-110'
+                                  : 'border-gray-200'
+                              }`}
+                              style={{ backgroundColor: bg.color }} />
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Image upload */}
+                      <div>
+                        <label className="text-xs font-medium text-gray-600 block mb-1.5">이미지 업로드</label>
+                        <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload}
+                          className="w-full text-xs file:mr-2 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-amber-100 file:text-amber-700 hover:file:bg-amber-200 file:cursor-pointer cursor-pointer text-gray-500" />
+                        {bgImage && (
+                          <button onClick={() => { setBgImage(null); if(fileInputRef.current) fileInputRef.current.value=''; }}
+                            className="text-xs text-red-500 hover:text-red-600 mt-1 underline">
+                            이미지 제거
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </Card>
+
+                  {/* BG Generator */}
+                  <Card className="p-4">
+                    <h2 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
+                      <span className="w-6 h-6 bg-amber-100 rounded-md flex items-center justify-center text-sm">✨</span>
+                      배경 이미지 생성
+                    </h2>
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {BG_GEN_TYPES.map(t => (
+                          <button key={t.id} onClick={() => setBgGenType(t.id)}
+                            className={`text-xs py-1.5 px-2 rounded-md border transition-all text-left ${
+                              bgGenType === t.id
+                                ? 'border-amber-400 bg-amber-50 text-amber-700 font-semibold'
+                                : 'border-gray-200 text-gray-500 hover:border-amber-300'
+                            }`}>
+                            {t.icon} {t.label}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex gap-4 pt-1">
+                        <ColorControl label="색상 1" value={bgGenColor1} onChange={setBgGenColor1} />
+                        <ColorControl label="색상 2" value={bgGenColor2} onChange={setBgGenColor2} />
+                      </div>
+                      <Button variant="primary" className="w-full" onClick={generateBgFromCanvas}>
+                        ✨ 배경 생성하기
+                      </Button>
+                    </div>
+                  </Card>
+
+                  {/* Bubbles */}
+                  <Card className="p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <h2 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                        <span className="w-6 h-6 bg-amber-100 rounded-md flex items-center justify-center text-sm">💬</span>
+                        말풍선 ({bubbles.length}/{MAX_BUBBLES})
+                      </h2>
+                      <Button size="sm" onClick={addBubble} disabled={bubbles.length >= MAX_BUBBLES}>
+                        + 추가
+                      </Button>
+                    </div>
+
+                    <div className="space-y-2">
+                      {bubbles.map((bubble, index) => (
+                        <BubbleEditor
+                          key={bubble.id}
+                          bubble={bubble}
+                          index={index}
+                          total={bubbles.length}
+                          isExpanded={expandedBubble === index}
+                          onToggle={() => setExpandedBubble(expandedBubble === index ? null : index)}
+                          onUpdate={(key, value) => updateBubble(index, key, value)}
+                          onDelete={() => deleteBubble(index)}
+                          onMove={(dir) => moveBubble(index, dir)}
+                        />
+                      ))}
+                      {bubbles.length === 0 && (
+                        <p className="text-center text-sm text-gray-400 py-6">
+                          말풍선이 없습니다.<br />위의 + 추가 버튼을 눌러 추가하세요.
+                        </p>
+                      )}
+                    </div>
+                  </Card>
+
+                  {/* Action Buttons */}
+                  <Card className="p-4">
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <Button variant="primary" className="flex-1" onClick={() => downloadCanvas('png')}>
+                          📥 PNG 다운로드
+                        </Button>
+                        <Button variant="secondary" className="flex-1" onClick={() => downloadCanvas('jpg')}>
+                          📥 JPG 다운로드
+                        </Button>
+                      </div>
+                      <Button variant="danger" size="sm" className="w-full" onClick={resetAll}>
+                        🔄 초기화
+                      </Button>
+                    </div>
+                  </Card>
+                </div>
+              </div>
+
+              {/* Right: Canvas Preview */}
+              <div className="flex-1 min-w-0">
+                <Card className="p-4 sticky top-4">
+                  <h2 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
+                    <span className="w-6 h-6 bg-amber-100 rounded-md flex items-center justify-center text-sm">👁️</span>
+                    미리보기
+                    <span className="text-xs font-normal text-gray-400 ml-auto">{canvasSize.w} x {canvasSize.h}px</span>
+                  </h2>
+                  <div className="flex items-center justify-center bg-gray-100 rounded-lg p-3"
+                    style={{ minHeight: '300px' }}>
+                    <canvas ref={canvasRef}
+                      width={canvasSize.w} height={canvasSize.h}
+                      className="rounded shadow-md border border-gray-200"
+                      onMouseDown={handleMouseDown}
+                      onMouseMove={handleMouseMove}
+                      onMouseUp={handleMouseUp}
+                      onMouseLeave={handleMouseUp}
+                      style={{
+                        maxWidth: '100%',
+                        maxHeight: 'calc(100vh - 240px)',
+                        objectFit: 'contain',
+                        cursor: dragging ? 'grabbing' : 'grab',
+                        userSelect: 'none',
+                      }}
+                    />
+                  </div>
+                  <p className="text-center text-xs text-gray-400 mt-2">
+                    컨트롤을 조작하면 실시간으로 반영됩니다
+                  </p>
+                </Card>
+              </div>
+
+            </div>
+          </main>
+
+          {/* Footer */}
+          <footer className="text-center py-4 text-xs text-gray-400">
+            짤 생성기 &copy; 2026 | Made with React
+          </footer>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🚀 Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

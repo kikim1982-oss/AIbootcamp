@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>디데이 계산기</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    * { font-family: -apple-system, BlinkMacSystemFont, 'Noto Sans KR', sans-serif; }
+    body {
+      background: #0f0f1a;
+      min-height: 100vh;
+    }
+    .bg-mesh {
+      background:
+        radial-gradient(ellipse at 20% 0%, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 100%, rgba(168, 85, 247, 0.12) 0%, transparent 50%),
+        radial-gradient(ellipse at 50% 50%, rgba(59, 130, 246, 0.08) 0%, transparent 60%);
+    }
+    .glass {
+      background: rgba(255, 255, 255, 0.05);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .glass-input {
+      background: rgba(255, 255, 255, 0.07);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .glass-input:focus {
+      border-color: rgba(139, 92, 246, 0.5);
+      box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15);
+    }
+
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(24px) scale(0.97); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @keyframes fadeOut {
+      from { opacity: 1; transform: scale(1); }
+      to { opacity: 0; transform: scale(0.95); }
+    }
+    .animate-in {
+      animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    .animate-out {
+      animation: fadeOut 0.3s cubic-bezier(0.4, 0, 1, 1) forwards;
+    }
+
+    .progress-ring-bg { stroke: rgba(255, 255, 255, 0.08); }
+    .countdown-num {
+      font-variant-numeric: tabular-nums;
+      font-feature-settings: "tnum";
+    }
+
+    @keyframes pulse-glow {
+      0%, 100% { opacity: 0.6; }
+      50% { opacity: 1; }
+    }
+    .pulse-dot {
+      animation: pulse-glow 2s ease-in-out infinite;
+    }
+
+    .card-hover {
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease;
+    }
+    .card-hover:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.4);
+    }
+
+    input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+      filter: invert(0.7);
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    // ========================================
+    // React Hooks Destructuring
+    // ========================================
+    const { useState, useEffect, useRef, useMemo, useCallback, createContext, useContext } = React;
+
+    // ========================================
+    // Constants & Utilities
+    // ========================================
+    const STORAGE_KEY = 'dday-calculator-items';
+
+    const CARD_THEMES = [
+      { gradient: 'from-violet-600/30 to-indigo-600/30', accent: 'text-violet-300', ring: '#8b5cf6', badge: 'bg-violet-500/20 text-violet-300' },
+      { gradient: 'from-blue-600/30 to-cyan-600/30', accent: 'text-blue-300', ring: '#3b82f6', badge: 'bg-blue-500/20 text-blue-300' },
+      { gradient: 'from-emerald-600/30 to-teal-600/30', accent: 'text-emerald-300', ring: '#10b981', badge: 'bg-emerald-500/20 text-emerald-300' },
+      { gradient: 'from-amber-600/30 to-orange-600/30', accent: 'text-amber-300', ring: '#f59e0b', badge: 'bg-amber-500/20 text-amber-300' },
+      { gradient: 'from-rose-600/30 to-pink-600/30', accent: 'text-rose-300', ring: '#f43f5e', badge: 'bg-rose-500/20 text-rose-300' },
+      { gradient: 'from-fuchsia-600/30 to-purple-600/30', accent: 'text-fuchsia-300', ring: '#d946ef', badge: 'bg-fuchsia-500/20 text-fuchsia-300' },
+    ];
+
+    function loadItems() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        return raw ? JSON.parse(raw) : [];
+      } catch { return []; }
+    }
+
+    function saveItems(items) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    }
+
+    function calcTimeDiff(targetDate) {
+      const now = new Date();
+      const target = new Date(targetDate);
+      const diffMs = target - now;
+      const isPast = diffMs < 0;
+      const absDiff = Math.abs(diffMs);
+
+      const totalSeconds = Math.floor(absDiff / 1000);
+      const totalMinutes = Math.floor(absDiff / (1000 * 60));
+      const totalHours = Math.floor(absDiff / (1000 * 60 * 60));
+      const days = Math.floor(absDiff / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((absDiff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const minutes = Math.floor((absDiff % (1000 * 60 * 60)) / (1000 * 60));
+      const seconds = Math.floor((absDiff % (1000 * 60)) / 1000);
+
+      return { isPast, days, hours, minutes, seconds, totalHours, totalMinutes, totalSeconds, diffMs: absDiff };
+    }
+
+    function calcProgress(createdAt, targetDate) {
+      const now = new Date();
+      const created = new Date(createdAt);
+      const target = new Date(targetDate);
+      const total = target - created;
+      const elapsed = now - created;
+      if (total <= 0) return 100;
+      return Math.min(100, Math.max(0, (elapsed / total) * 100));
+    }
+
+    function formatDate(dateStr) {
+      const d = new Date(dateStr);
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const h = String(d.getHours()).padStart(2, '0');
+      const m = String(d.getMinutes()).padStart(2, '0');
+      return `${year}.${month}.${day} ${h}:${m}`;
+    }
+
+    function getDefaultDatetime() {
+      const d = new Date();
+      d.setDate(d.getDate() + 30);
+      d.setHours(0, 0, 0, 0);
+      return d.toISOString().slice(0, 16);
+    }
+
+    // ========================================
+    // Design System Components
+    // ========================================
+    function Button({ children, variant = 'primary', size = 'md', onClick, disabled, className = '', type = 'button' }) {
+      const base = 'inline-flex items-center justify-center font-medium rounded-xl transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[#0f0f1a]';
+      const variants = {
+        primary: 'bg-violet-600 hover:bg-violet-500 text-white focus:ring-violet-500 shadow-lg shadow-violet-600/25',
+        secondary: 'glass text-gray-300 hover:text-white hover:bg-white/10 focus:ring-white/30',
+        danger: 'bg-red-500/15 text-red-400 hover:bg-red-500/25 focus:ring-red-500',
+        ghost: 'text-gray-400 hover:text-white hover:bg-white/10 focus:ring-white/20',
+      };
+      const sizes = {
+        sm: 'px-3 py-1.5 text-sm gap-1.5',
+        md: 'px-5 py-2.5 text-sm gap-2',
+        lg: 'px-7 py-3.5 text-base gap-2.5',
+      };
+      return (
+        <button
+          type={type}
+          onClick={onClick}
+          disabled={disabled}
+          className={`${base} ${variants[variant]} ${sizes[size]} ${disabled ? 'opacity-40 cursor-not-allowed' : 'active:scale-[0.97]'} ${className}`}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    function Input({ label, value, onChange, type = 'text', placeholder, className = '' }) {
+      return (
+        <div className={`flex flex-col gap-2 ${className}`}>
+          {label && <label className="text-sm font-medium text-gray-400">{label}</label>}
+          <input
+            type={type}
+            value={value}
+            onChange={onChange}
+            placeholder={placeholder}
+            className="glass-input px-4 py-3 rounded-xl text-white placeholder-gray-500 text-sm outline-none transition-all duration-200"
+          />
+        </div>
+      );
+    }
+
+    function Modal({ isOpen, onClose, title, children }) {
+      const overlayRef = useRef(null);
+
+      useEffect(() => {
+        if (isOpen) {
+          document.body.style.overflow = 'hidden';
+        } else {
+          document.body.style.overflow = '';
+        }
+        return () => { document.body.style.overflow = ''; };
+      }, [isOpen]);
+
+      if (!isOpen) return null;
+
+      return (
+        <div
+          ref={overlayRef}
+          onClick={(e) => { if (e.target === overlayRef.current) onClose(); }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in"
+        >
+          <div className="glass rounded-2xl p-6 w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-semibold text-white">{title}</h2>
+              <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors p-1">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+              </button>
+            </div>
+            {children}
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Progress Ring Component
+    // ========================================
+    function ProgressRing({ progress, size = 80, strokeWidth = 5, color = '#8b5cf6' }) {
+      const radius = (size - strokeWidth) / 2;
+      const circumference = 2 * Math.PI * radius;
+      const offset = circumference - (progress / 100) * circumference;
+
+      return (
+        <svg width={size} height={size} className="transform -rotate-90">
+          <circle
+            className="progress-ring-bg"
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="none"
+            strokeWidth={strokeWidth}
+          />
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="none"
+            stroke={color}
+            strokeWidth={strokeWidth}
+            strokeDasharray={circumference}
+            strokeDashoffset={offset}
+            strokeLinecap="round"
+            style={{ transition: 'stroke-dashoffset 1s ease' }}
+          />
+        </svg>
+      );
+    }
+
+    // ========================================
+    // Current Time Header
+    // ========================================
+    function CurrentTimeHeader() {
+      const [now, setNow] = useState(new Date());
+
+      useEffect(() => {
+        const id = setInterval(() => setNow(new Date()), 1000);
+        return () => clearInterval(id);
+      }, []);
+
+      const weekdays = ['일', '월', '화', '수', '목', '금', '토'];
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const d = String(now.getDate()).padStart(2, '0');
+      const day = weekdays[now.getDay()];
+      const h = String(now.getHours()).padStart(2, '0');
+      const min = String(now.getMinutes()).padStart(2, '0');
+      const sec = String(now.getSeconds()).padStart(2, '0');
+
+      return (
+        <div className="text-center mb-10">
+          <div className="inline-flex items-center gap-2 mb-3">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></span>
+            <span className="text-xs font-medium text-emerald-400 tracking-wider uppercase">Live</span>
+          </div>
+          <div className="text-gray-400 text-sm mb-1">{y}. {m}. {d}. ({day}요일)</div>
+          <div className="text-white text-4xl sm:text-5xl font-light tracking-tight countdown-num">
+            {h}<span className="text-violet-400 mx-1">:</span>{min}<span className="text-violet-400 mx-1">:</span>{sec}
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // D-Day Card Component
+    // ========================================
+    function DdayCard({ item, index, onDelete }) {
+      const [timeDiff, setTimeDiff] = useState(() => calcTimeDiff(item.targetDate));
+      const [progress, setProgress] = useState(() => calcProgress(item.createdAt, item.targetDate));
+      const [removing, setRemoving] = useState(false);
+
+      const theme = CARD_THEMES[index % CARD_THEMES.length];
+
+      useEffect(() => {
+        const id = setInterval(() => {
+          setTimeDiff(calcTimeDiff(item.targetDate));
+          setProgress(calcProgress(item.createdAt, item.targetDate));
+        }, 1000);
+        return () => clearInterval(id);
+      }, [item.targetDate, item.createdAt]);
+
+      const handleDelete = () => {
+        setRemoving(true);
+        setTimeout(() => onDelete(item.id), 300);
+      };
+
+      const ddayLabel = timeDiff.isPast
+        ? `D+${timeDiff.days}`
+        : timeDiff.days === 0 && timeDiff.hours === 0 && timeDiff.minutes === 0 && timeDiff.seconds === 0
+          ? 'D-Day'
+          : `D-${timeDiff.days}`;
+
+      const isToday = !timeDiff.isPast && timeDiff.days === 0;
+
+      return (
+        <div className={`${removing ? 'animate-out' : 'animate-in'} card-hover`} style={{ animationDelay: `${index * 0.08}s` }}>
+          <div className={`glass rounded-2xl overflow-hidden bg-gradient-to-br ${theme.gradient}`}>
+            {/* Top section */}
+            <div className="p-5 pb-4">
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-white font-semibold text-lg truncate">{item.title}</h3>
+                  <p className="text-gray-400 text-xs mt-1">{formatDate(item.targetDate)}</p>
+                </div>
+                <button
+                  onClick={handleDelete}
+                  className="text-gray-600 hover:text-red-400 transition-colors p-1.5 -mr-1.5 -mt-0.5 rounded-lg hover:bg-red-500/10"
+                  aria-label="삭제"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14"/>
+                  </svg>
+                </button>
+              </div>
+
+              {/* D-day number */}
+              <div className="flex items-center gap-4 mb-4">
+                <div className="relative flex-shrink-0">
+                  <ProgressRing progress={Math.min(progress, 100)} size={72} strokeWidth={4} color={theme.ring} />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className="text-[11px] text-gray-400 countdown-num">{Math.round(progress)}%</span>
+                  </div>
+                </div>
+                <div>
+                  <div className={`text-3xl sm:text-4xl font-bold countdown-num ${timeDiff.isPast ? 'text-gray-400' : isToday ? 'text-amber-300' : 'text-white'}`}>
+                    {ddayLabel}
+                  </div>
+                  {timeDiff.isPast && (
+                    <span className="text-xs text-gray-500 mt-0.5 block">지난 이벤트</span>
+                  )}
+                  {isToday && (
+                    <span className="text-xs text-amber-400 mt-0.5 block font-medium">오늘입니다!</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Time breakdown */}
+              <div className="grid grid-cols-4 gap-2 mb-4">
+                {[
+                  { label: '일', value: timeDiff.days },
+                  { label: '시간', value: timeDiff.hours },
+                  { label: '분', value: timeDiff.minutes },
+                  { label: '초', value: timeDiff.seconds },
+                ].map((unit) => (
+                  <div key={unit.label} className="text-center glass rounded-xl py-2.5 px-1">
+                    <div className={`text-xl sm:text-2xl font-bold countdown-num ${theme.accent}`}>
+                      {String(unit.value).padStart(2, '0')}
+                    </div>
+                    <div className="text-[10px] text-gray-500 mt-0.5">{unit.label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Stats bar */}
+            <div className="border-t border-white/5 px-5 py-3 flex items-center justify-between text-[11px] text-gray-500">
+              <span>총 <span className="text-gray-400 countdown-num">{timeDiff.totalHours.toLocaleString()}</span> 시간</span>
+              <span>총 <span className="text-gray-400 countdown-num">{timeDiff.totalMinutes.toLocaleString()}</span> 분</span>
+              <span>총 <span className="text-gray-400 countdown-num">{timeDiff.totalSeconds.toLocaleString()}</span> 초</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Add D-Day Form (Modal)
+    // ========================================
+    function AddDdayModal({ isOpen, onClose, onAdd }) {
+      const [title, setTitle] = useState('');
+      const [targetDate, setTargetDate] = useState(getDefaultDatetime);
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        if (!title.trim() || !targetDate) return;
+        onAdd({
+          id: Date.now().toString(),
+          title: title.trim(),
+          targetDate,
+          createdAt: new Date().toISOString(),
+        });
+        setTitle('');
+        setTargetDate(getDefaultDatetime());
+        onClose();
+      };
+
+      return (
+        <Modal isOpen={isOpen} onClose={onClose} title="새 디데이 추가">
+          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            <Input
+              label="이벤트 이름"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="예: 시험일, 여행, 생일"
+            />
+            <Input
+              label="목표 날짜와 시간"
+              type="datetime-local"
+              value={targetDate}
+              onChange={(e) => setTargetDate(e.target.value)}
+            />
+            <div className="flex gap-3 mt-2">
+              <Button variant="secondary" onClick={onClose} className="flex-1">취소</Button>
+              <Button variant="primary" type="submit" disabled={!title.trim() || !targetDate} className="flex-1">추가하기</Button>
+            </div>
+          </form>
+        </Modal>
+      );
+    }
+
+    // ========================================
+    // Empty State
+    // ========================================
+    function EmptyState({ onAdd }) {
+      return (
+        <div className="text-center py-20 animate-in">
+          <div className="inline-flex items-center justify-center w-20 h-20 rounded-full glass mb-6">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" className="text-violet-400">
+              <rect x="3" y="4" width="18" height="18" rx="2"/>
+              <path d="M16 2v4M8 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/>
+            </svg>
+          </div>
+          <h3 className="text-white text-lg font-medium mb-2">디데이가 없습니다</h3>
+          <p className="text-gray-500 text-sm mb-8 max-w-xs mx-auto">
+            중요한 날짜를 추가하고 실시간으로 남은 시간을 확인하세요
+          </p>
+          <Button variant="primary" size="lg" onClick={onAdd}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            첫 디데이 추가하기
+          </Button>
+        </div>
+      );
+    }
+
+    // ========================================
+    // App Component
+    // ========================================
+    function App() {
+      const [items, setItems] = useState(loadItems);
+      const [modalOpen, setModalOpen] = useState(false);
+
+      useEffect(() => {
+        saveItems(items);
+      }, [items]);
+
+      const handleAdd = useCallback((newItem) => {
+        setItems((prev) => [newItem, ...prev]);
+      }, []);
+
+      const handleDelete = useCallback((id) => {
+        setItems((prev) => prev.filter((item) => item.id !== id));
+      }, []);
+
+      return (
+        <div className="bg-mesh min-h-screen">
+          <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+            {/* Header */}
+            <header className="mb-10">
+              <div className="flex items-center justify-between mb-8">
+                <div>
+                  <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">디데이 계산기</h1>
+                  <p className="text-gray-500 text-sm mt-1">D-Day Calculator</p>
+                </div>
+                {items.length > 0 && (
+                  <Button variant="primary" onClick={() => setModalOpen(true)}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                    <span className="hidden sm:inline">추가</span>
+                  </Button>
+                )}
+              </div>
+              <CurrentTimeHeader />
+            </header>
+
+            {/* Content */}
+            {items.length === 0 ? (
+              <EmptyState onAdd={() => setModalOpen(true)} />
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
+                {items.map((item, i) => (
+                  <DdayCard key={item.id} item={item} index={i} onDelete={handleDelete} />
+                ))}
+              </div>
+            )}
+
+            {/* Footer */}
+            <footer className="text-center mt-16 pb-4">
+              <p className="text-gray-700 text-xs">D-Day Calculator</p>
+            </footer>
+          </div>
+
+          {/* Modal */}
+          <AddDdayModal
+            isOpen={modalOpen}
+            onClose={() => setModalOpen(false)}
+            onAdd={handleAdd}
+          />
+        </div>
+      );
+    }
+
+    // ========================================
+    // Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
