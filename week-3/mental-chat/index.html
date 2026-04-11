@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>마음이 - 심리상담 챗봇</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            warm: {
+              50: '#fef9f3',
+              100: '#fdf0e0',
+              200: '#fbe0c0',
+              300: '#f7c896',
+              400: '#f2a86a',
+              500: '#ed8a42',
+              600: '#de6f2a',
+            },
+            sage: {
+              50: '#f4f7f4',
+              100: '#e6ede6',
+              200: '#cddccd',
+              300: '#a8c2a8',
+              400: '#7da47d',
+              500: '#5e8a5e',
+              600: '#4a6f4a',
+            },
+            lavender: {
+              50: '#f8f5fc',
+              100: '#efe8f8',
+              200: '#e0d1f1',
+              300: '#c9b1e6',
+              400: '#ad88d6',
+              500: '#9366c4',
+              600: '#7c4daa',
+            },
+            blush: {
+              50: '#fef5f7',
+              100: '#fdeaef',
+              200: '#fbd5df',
+              300: '#f8b0c4',
+              400: '#f283a2',
+              500: '#e85d82',
+              600: '#d43d66',
+            },
+            sky: {
+              50: '#f0f7fc',
+              100: '#e0eff8',
+              200: '#bddff1',
+              300: '#8ac6e7',
+              400: '#52a9d9',
+              500: '#2d8fc5',
+              600: '#1f73a6',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap');
+    body {
+      font-family: 'Noto Sans KR', sans-serif;
+    }
+    .chat-container::-webkit-scrollbar {
+      width: 6px;
+    }
+    .chat-container::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .chat-container::-webkit-scrollbar-thumb {
+      background: rgba(203, 159, 88, 0.25);
+      border-radius: 3px;
+    }
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(12px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    .msg-animate {
+      animation: fadeInUp 0.35s ease-out;
+    }
+    @keyframes dotPulse {
+      0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+      40% { opacity: 1; transform: scale(1); }
+    }
+    .dot-1 { animation: dotPulse 1.4s infinite 0s; }
+    .dot-2 { animation: dotPulse 1.4s infinite 0.2s; }
+    .dot-3 { animation: dotPulse 1.4s infinite 0.4s; }
+  </style>
+</head>
+<body class="bg-slate-950">
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useRef, useEffect, useCallback, useMemo } = React;
+
+    // ========================================
+    // 🗂️ 상수 및 데이터
+    // ========================================
+
+    const QUICK_REPLIES = [
+      { text: "오늘 힘들었어요", emoji: "😔" },
+      { text: "불안해요", emoji: "😰" },
+      { text: "화가 나요", emoji: "😤" },
+      { text: "외로워요", emoji: "🥺" },
+      { text: "잠이 안 와요", emoji: "😵‍💫" },
+      { text: "기분이 좋아요", emoji: "😊" },
+      { text: "고마워요", emoji: "🙏" },
+    ];
+
+    const KEYWORD_RESPONSES = {
+      힘들: [
+        "오늘 하루 정말 고생 많으셨어요. 힘든 하루를 보내셨군요. 어떤 일이 있었는지 편하게 이야기해 주실 수 있을까요?",
+        "힘든 감정을 느끼고 계시는군요. 그 감정은 충분히 자연스러운 거예요. 무엇이 가장 힘드셨나요?",
+        "많이 지치셨나 봐요. 잠시 깊은 숨을 쉬어보는 건 어떨까요? 제가 여기서 기다리고 있을게요.",
+      ],
+      불안: [
+        "불안한 마음이 드시는군요. 불안은 우리 마음이 보내는 신호이기도 해요. 어떤 상황에서 불안을 느끼시나요?",
+        "지금 마음이 많이 조급하시죠? 잠시 함께 호흡을 해볼까요? 천천히 숨을 들이쉬고... 내쉬고... 괜찮아질 거예요.",
+        "불안한 감정이 찾아오면 정말 힘들죠. 혹시 구체적으로 걱정되는 것이 있으신가요?",
+      ],
+      화: [
+        "화가 나셨군요. 화는 자연스러운 감정이에요. 어떤 일 때문에 화가 나셨는지 이야기해 주실 수 있나요?",
+        "분노를 느끼고 계시군요. 그 감정을 억누르지 않으셔도 돼요. 여기서 편하게 말씀해 주세요.",
+        "화가 나는 건 내 경계가 침범당했다고 느끼기 때문일 수 있어요. 무엇이 그렇게 느끼게 했을까요?",
+      ],
+      외로: [
+        "외로움을 느끼고 계시는군요. 그 마음이 충분히 이해돼요. 지금 이렇게 저와 이야기하고 계시잖아요. 혼자가 아니에요.",
+        "외로운 감정은 정말 힘들죠. 주변에 마음을 나눌 수 있는 사람이 있으신가요?",
+        "외로움은 누구나 느낄 수 있는 감정이에요. 오늘은 자신에게 따뜻한 음료 한 잔 대접해보는 건 어떨까요?",
+      ],
+      잠: [
+        "잠이 오지 않으시는군요. 혹시 자기 전에 머릿속에 많은 생각이 맴도나요?",
+        "수면에 어려움을 겪고 계시군요. 자기 전에 따뜻한 차 한 잔과 가벼운 스트레칭을 해보시는 건 어떨까요?",
+        "밤에 잠이 안 오면 정말 괴롭죠. 혹시 최근에 스트레스를 받은 일이 있으셨나요?",
+      ],
+      좋: [
+        "기분이 좋으시다니 저도 정말 기뻐요! 어떤 좋은 일이 있었나요? 이야기해 주세요!",
+        "좋은 에너지가 느껴져요! 이런 기분 좋은 순간을 마음속에 잘 담아두시면, 힘들 때 꺼내볼 수 있을 거예요.",
+        "오늘 좋은 하루를 보내고 계시는군요! 그 행복한 감정을 충분히 느끼세요.",
+      ],
+      고마: [
+        "저야말로 이렇게 찾아와 주셔서 감사해요. 언제든 이야기하고 싶을 때 와주세요.",
+        "따뜻한 말씀 감사해요. 당신의 이야기를 들을 수 있어서 저도 기뻐요.",
+        "고맙다는 말을 전해주시다니 정말 감동이에요. 항상 응원하고 있을게요!",
+      ],
+      스트레스: [
+        "스트레스를 많이 받고 계시는군요. 자신만의 스트레스 해소 방법이 있으신가요?",
+        "스트레스는 쌓이기 전에 조금씩 풀어주는 게 중요해요. 잠시 좋아하는 음악을 들어보시는 건 어떨까요?",
+      ],
+      우울: [
+        "우울한 감정이 찾아오셨군요. 그런 마음이 드는 건 자연스러운 거예요. 혼자 감당하지 않으셔도 돼요.",
+        "마음이 많이 가라앉아 있으시군요. 오늘은 무리하지 마시고, 자신을 위한 작은 것 하나만 해보시는 건 어떨까요?",
+        "우울한 감정이 오래 지속되고 계신다면, 전문 상담을 받아보시는 것도 좋은 방법이에요. 도움을 받는 것은 용기 있는 일이에요.",
+      ],
+      걱정: [
+        "걱정이 많으시군요. 걱정의 80%는 실제로 일어나지 않는다고 해요. 지금 가장 걱정되는 것 하나만 이야기해 주실래요?",
+        "마음속에 걱정이 가득 차 있으시군요. 종이에 걱정거리를 적어보면 마음이 좀 가벼워질 수 있어요.",
+      ],
+      감사: [
+        "감사한 마음을 표현해 주시다니 저도 따뜻해지네요. 감사 일기를 써보시는 건 어떨까요? 하루에 세 가지씩 감사한 것을 적어보면 마음이 한결 편안해질 거예요.",
+      ],
+    };
+
+    const DEFAULT_RESPONSES = [
+      "네, 말씀해 주셔서 감사해요. 더 자세히 이야기해 주실 수 있을까요?",
+      "그런 마음이 드셨군요. 충분히 이해해요. 어떤 부분이 가장 마음에 걸리시나요?",
+      "당신의 이야기를 듣고 있어요. 편하게 말씀해 주세요.",
+      "그 상황이 쉽지 않으셨겠네요. 지금 기분은 어떠세요?",
+      "함께 이야기할 수 있어서 다행이에요. 천천히 말씀해 주세요.",
+      "마음이 편해지실 때까지 여기서 기다리고 있을게요. 더 이야기하고 싶은 것이 있나요?",
+    ];
+
+    const INITIAL_MESSAGE = {
+      id: 0,
+      sender: "ai",
+      text: "안녕하세요, 저는 심리상담사 마음이예요. 오늘 하루는 어떠셨나요? 어떤 이야기든 편하게 나눠주세요. 여기서는 모든 감정이 환영받아요.",
+      time: new Date(),
+    };
+
+    // ========================================
+    // 🛠️ 유틸리티 함수
+    // ========================================
+
+    function formatTime(date) {
+      const d = date instanceof Date ? date : new Date(date);
+      const h = d.getHours();
+      const m = String(d.getMinutes()).padStart(2, "0");
+      const period = h < 12 ? "오전" : "오후";
+      const hour12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+      return `${period} ${hour12}:${m}`;
+    }
+
+    function formatDate(date) {
+      const d = date instanceof Date ? date : new Date(date);
+      const year = d.getFullYear();
+      const month = d.getMonth() + 1;
+      const day = d.getDate();
+      const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
+      const weekday = weekdays[d.getDay()];
+      return `${year}년 ${month}월 ${day}일 (${weekday})`;
+    }
+
+    function getAIResponse(userMessage) {
+      const msg = userMessage.toLowerCase();
+      for (const [keyword, responses] of Object.entries(KEYWORD_RESPONSES)) {
+        if (msg.includes(keyword)) {
+          return responses[Math.floor(Math.random() * responses.length)];
+        }
+      }
+      return DEFAULT_RESPONSES[Math.floor(Math.random() * DEFAULT_RESPONSES.length)];
+    }
+
+    function isSameDay(d1, d2) {
+      const a = d1 instanceof Date ? d1 : new Date(d1);
+      const b = d2 instanceof Date ? d2 : new Date(d2);
+      return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    }
+
+    // ========================================
+    // 🎨 디자인 시스템 컴포넌트
+    // ========================================
+
+    function Avatar({ name, status }) {
+      return (
+        <div className="relative">
+          <div className="w-11 h-11 rounded-full bg-gradient-to-br from-amber-600 to-amber-800 flex items-center justify-center text-white font-semibold text-lg shadow-sm">
+            {name[0]}
+          </div>
+          {status && (
+            <div className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-white ${status === "online" ? "bg-green-400" : "bg-gray-300"}`} />
+          )}
+        </div>
+      );
+    }
+
+    function TypingIndicator() {
+      return (
+        <div className="flex items-end gap-2 msg-animate mb-4 px-4">
+          <Avatar name="마" />
+          <div className="bg-slate-800 rounded-2xl rounded-bl-sm px-5 py-3.5 shadow-sm border border-slate-700">
+            <div className="flex items-center gap-1.5">
+              <div className="w-2 h-2 rounded-full bg-amber-400 dot-1" />
+              <div className="w-2 h-2 rounded-full bg-amber-400 dot-2" />
+              <div className="w-2 h-2 rounded-full bg-amber-400 dot-3" />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function DateDivider({ date }) {
+      return (
+        <div className="flex items-center justify-center my-5 px-4">
+          <div className="bg-slate-800 text-amber-400/80 text-xs font-medium px-4 py-1.5 rounded-full border border-slate-700">
+            {formatDate(date)}
+          </div>
+        </div>
+      );
+    }
+
+    function ChatBubble({ message }) {
+      const isAI = message.sender === "ai";
+      return (
+        <div className={`flex items-end gap-2 msg-animate mb-3 px-4 ${isAI ? "justify-start" : "justify-end"}`}>
+          {isAI && <Avatar name="마" />}
+          <div className={`max-w-[75%] sm:max-w-[65%] flex flex-col ${isAI ? "items-start" : "items-end"}`}>
+            {isAI && <span className="text-xs text-amber-400/80 font-medium mb-1 ml-1 tracking-wide">마음이</span>}
+            <div
+              className={`px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap break-words ${
+                isAI
+                  ? "bg-slate-800 text-slate-200 rounded-2xl rounded-bl-sm shadow-sm border border-slate-700"
+                  : "bg-gradient-to-br from-amber-600 to-amber-700 text-white rounded-2xl rounded-br-sm shadow-sm"
+              }`}
+            >
+              {message.text}
+            </div>
+            <span className={`text-[10px] text-gray-400 mt-1 ${isAI ? "ml-1" : "mr-1"}`}>
+              {formatTime(message.time)}
+            </span>
+          </div>
+        </div>
+      );
+    }
+
+    function QuickReplyButton({ text, emoji, onClick }) {
+      return (
+        <button
+          onClick={() => onClick(text)}
+          className="flex-shrink-0 inline-flex items-center gap-1.5 px-4 py-2 bg-slate-800 border border-slate-700 text-slate-300 text-sm rounded-full hover:bg-slate-700 hover:border-amber-500/50 hover:text-amber-300 active:scale-95 transition-all shadow-sm"
+        >
+          <span>{emoji}</span>
+          <span>{text}</span>
+        </button>
+      );
+    }
+
+    // ========================================
+    // 🧩 레이아웃 컴포넌트
+    // ========================================
+
+    function Header() {
+      return (
+        <header className="bg-slate-900/95 backdrop-blur-md border-b border-slate-800 px-4 py-3 flex items-center gap-3 sticky top-0 z-10">
+          <Avatar name="마" status="online" />
+          <div className="flex-1 min-w-0">
+            <h1 className="text-base font-semibold text-slate-100 leading-tight tracking-wide">마음이</h1>
+            <p className="text-xs text-slate-400 flex items-center gap-1">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              상담 가능
+            </p>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-amber-400/70 bg-slate-800 border border-slate-700 px-2.5 py-1 rounded-full tracking-widest">AI 심리상담</span>
+          </div>
+        </header>
+      );
+    }
+
+    function QuickReplies({ onSelect }) {
+      return (
+        <div className="px-4 py-2 border-t border-slate-800 bg-slate-900/50">
+          <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
+            {QUICK_REPLIES.map((qr) => (
+              <QuickReplyButton key={qr.text} text={qr.text} emoji={qr.emoji} onClick={onSelect} />
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function MessageInput({ value, onChange, onSend, disabled }) {
+      const handleKeyDown = (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          onSend();
+        }
+      };
+
+      return (
+        <div className="px-4 py-3 bg-slate-900 border-t border-slate-800">
+          <div className="flex items-end gap-2 max-w-3xl mx-auto">
+            <div className="flex-1 relative">
+              <textarea
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="마음속 이야기를 편하게 적어주세요..."
+                disabled={disabled}
+                rows={1}
+                className="w-full resize-none rounded-2xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/10 transition-all disabled:opacity-50"
+                style={{ maxHeight: "120px" }}
+                onInput={(e) => {
+                  e.target.style.height = "auto";
+                  e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
+                }}
+              />
+            </div>
+            <button
+              onClick={onSend}
+              disabled={disabled || !value.trim()}
+              className="flex-shrink-0 w-11 h-11 rounded-full bg-gradient-to-br from-amber-600 to-amber-700 text-white flex items-center justify-center hover:from-amber-500 hover:to-amber-600 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+              aria-label="메시지 전송"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 -rotate-45 translate-x-0.5">
+                <path d="M3.478 2.404a.75.75 0 0 0-.926.941l2.432 7.905H13.5a.75.75 0 0 1 0 1.5H4.984l-2.432 7.905a.75.75 0 0 0 .926.94 60.519 60.519 0 0 0 18.445-8.986.75.75 0 0 0 0-1.218A60.517 60.517 0 0 0 3.478 2.404Z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 📄 메인 앱 컴포넌트
+    // ========================================
+
+    function App() {
+      const [messages, setMessages] = useState([INITIAL_MESSAGE]);
+      const [input, setInput] = useState("");
+      const [isTyping, setIsTyping] = useState(false);
+      const chatEndRef = useRef(null);
+      const nextIdRef = useRef(1);
+
+      const scrollToBottom = useCallback(() => {
+        setTimeout(() => {
+          chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        }, 50);
+      }, []);
+
+      useEffect(() => {
+        scrollToBottom();
+      }, [messages, isTyping, scrollToBottom]);
+
+      const sendMessage = useCallback(
+        async (text) => {
+          const trimmed = (text || input).trim();
+          if (!trimmed || isTyping) return;
+
+          const userMsg = {
+            id: nextIdRef.current++,
+            sender: "user",
+            text: trimmed,
+            time: new Date(),
+          };
+
+          const updatedMessages = [...messages, userMsg];
+          setMessages(updatedMessages);
+          setInput("");
+          setIsTyping(true);
+
+          try {
+            // Convert to OpenAI message format
+            const apiMessages = updatedMessages.map((m) => ({
+              role: m.sender === "ai" ? "assistant" : "user",
+              content: m.text,
+            }));
+
+            const res = await fetch("/api/chat", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ messages: apiMessages }),
+            });
+
+            const data = await res.json();
+            const aiText = data.success ? data.reply : "죄송해요, 잠시 문제가 발생했어요. 다시 시도해 주세요.";
+
+            const aiMsg = {
+              id: nextIdRef.current++,
+              sender: "ai",
+              text: aiText,
+              time: new Date(),
+            };
+            setMessages((prev) => [...prev, aiMsg]);
+          } catch (err) {
+            console.error("Chat API error:", err);
+            const errorMsg = {
+              id: nextIdRef.current++,
+              sender: "ai",
+              text: "죄송해요, 잠시 문제가 발생했어요. 다시 시도해 주세요.",
+              time: new Date(),
+            };
+            setMessages((prev) => [...prev, errorMsg]);
+          } finally {
+            setIsTyping(false);
+          }
+        },
+        [input, isTyping, messages]
+      );
+
+      const handleQuickReply = useCallback(
+        (text) => {
+          if (!isTyping) {
+            sendMessage(text);
+          }
+        },
+        [sendMessage, isTyping]
+      );
+
+      const messagesWithDividers = useMemo(() => {
+        const result = [];
+        let lastDate = null;
+        for (const msg of messages) {
+          if (!lastDate || !isSameDay(lastDate, msg.time)) {
+            result.push({ type: "date", date: msg.time, id: `date-${msg.id}` });
+            lastDate = msg.time;
+          }
+          result.push({ type: "message", ...msg });
+        }
+        return result;
+      }, [messages]);
+
+      return (
+        <div className="h-dvh flex flex-col bg-slate-950 max-w-2xl mx-auto shadow-2xl shadow-black/50">
+          <Header />
+
+          {/* 채팅 영역 */}
+          <div className="flex-1 overflow-y-auto chat-container py-2">
+            {messagesWithDividers.map((item) =>
+              item.type === "date" ? (
+                <DateDivider key={item.id} date={item.date} />
+              ) : (
+                <ChatBubble key={item.id} message={item} />
+              )
+            )}
+            {isTyping && <TypingIndicator />}
+            <div ref={chatEndRef} />
+          </div>
+
+          {/* 빠른 답변 */}
+          <QuickReplies onSelect={handleQuickReply} />
+
+          {/* 입력창 */}
+          <MessageInput
+            value={input}
+            onChange={setInput}
+            onSend={() => sendMessage()}
+            disabled={isTyping}
+          />
+
+          {/* 하단 안내 */}
+          <div className="bg-slate-900 px-4 py-2 border-t border-slate-800 text-center">
+            <p className="text-[10px] text-slate-600 leading-tight">
+              마음이는 AI 기반 심리상담 서비스입니다. 긴급한 상황에서는 자살예방상담전화 1393 또는 정신건강위기상담전화 1577-0199로 연락해 주세요.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🚀 렌더링
+    // ========================================
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
