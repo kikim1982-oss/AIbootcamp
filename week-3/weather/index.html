@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>날씨 앱</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .spinner {
+      animation: spin 1s linear infinite;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .fade-in {
+      animation: fadeIn 0.4s ease-out;
+    }
+    .leaflet-container {
+      z-index: 0;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    // ========================================
+    // React Hooks Destructuring
+    // ========================================
+    const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+    // ========================================
+    // Constants
+    // ========================================
+    const WEATHER_API_BASE = 'https://api.openweathermap.org/data/2.5';
+    const ICON_URL = (icon) => `https://openweathermap.org/img/wn/${icon}@2x.png`;
+    const QUICK_CITIES = [
+      { name: '서울', query: 'Seoul' },
+      { name: '부산', query: 'Busan' },
+      { name: '도쿄', query: 'Tokyo' },
+      { name: '뉴욕', query: 'New York' },
+      { name: '런던', query: 'London' },
+      { name: '파리', query: 'Paris' },
+    ];
+
+    // ========================================
+    // Utility Functions
+    // ========================================
+    function getBackgroundGradient(weatherMain) {
+      const map = {
+        Clear: 'from-sky-400 via-blue-500 to-blue-600',
+        Clouds: 'from-gray-400 via-gray-500 to-gray-600',
+        Rain: 'from-indigo-700 via-slate-700 to-gray-800',
+        Drizzle: 'from-indigo-600 via-slate-600 to-gray-700',
+        Thunderstorm: 'from-gray-900 via-indigo-900 to-gray-800',
+        Snow: 'from-blue-100 via-gray-200 to-white',
+        Mist: 'from-gray-300 via-gray-400 to-gray-500',
+        Fog: 'from-gray-300 via-gray-400 to-gray-500',
+        Haze: 'from-yellow-200 via-gray-300 to-gray-400',
+      };
+      return map[weatherMain] || 'from-sky-400 via-blue-500 to-blue-600';
+    }
+
+    function getTextColor(weatherMain) {
+      const dark = ['Snow', 'Mist', 'Fog', 'Haze'];
+      return dark.includes(weatherMain) ? 'text-gray-800' : 'text-white';
+    }
+
+    function formatTime(unix, timezone) {
+      const d = new Date((unix + timezone) * 1000);
+      const h = d.getUTCHours().toString().padStart(2, '0');
+      const m = d.getUTCMinutes().toString().padStart(2, '0');
+      return `${h}:${m}`;
+    }
+
+    function formatDate(dt_txt) {
+      const d = new Date(dt_txt);
+      const days = ['일', '월', '화', '수', '목', '금', '토'];
+      return `${d.getMonth() + 1}/${d.getDate()} (${days[d.getDay()]})`;
+    }
+
+    // ========================================
+    // Design System Components
+    // ========================================
+    function Button({ children, onClick, variant = 'primary', size = 'md', disabled = false, className = '' }) {
+      const base = 'rounded-lg font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
+      const variants = {
+        primary: 'bg-white/20 backdrop-blur-sm hover:bg-white/30 text-white border border-white/30 focus:ring-white/50',
+        secondary: 'bg-white/10 backdrop-blur-sm hover:bg-white/20 text-white/90 border border-white/20 focus:ring-white/30',
+        ghost: 'hover:bg-white/10 text-white/80 focus:ring-white/20',
+      };
+      const sizes = {
+        sm: 'px-3 py-1.5 text-sm',
+        md: 'px-4 py-2 text-base',
+        lg: 'px-6 py-3 text-lg',
+      };
+      return (
+        <button
+          onClick={onClick}
+          disabled={disabled}
+          className={`${base} ${variants[variant]} ${sizes[size]} ${className}`}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    function Input({ type = 'text', value, onChange, placeholder, className = '', label, icon }) {
+      return (
+        <div className={className}>
+          {label && <label className="block text-sm font-medium text-white/80 mb-1">{label}</label>}
+          <div className="relative">
+            {icon && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/50">{icon}</span>}
+            <input
+              type={type}
+              value={value}
+              onChange={onChange}
+              placeholder={placeholder}
+              className={`w-full rounded-lg bg-white/15 backdrop-blur-sm border border-white/25 text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/40 focus:border-transparent transition-all ${icon ? 'pl-10' : 'pl-4'} pr-4 py-2.5`}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    function Card({ children, className = '' }) {
+      return (
+        <div className={`bg-white/15 backdrop-blur-md rounded-2xl border border-white/20 shadow-lg ${className}`}>
+          {children}
+        </div>
+      );
+    }
+
+    function Spinner() {
+      return (
+        <div className="flex flex-col items-center justify-center py-20">
+          <div className="w-12 h-12 border-4 border-white/30 border-t-white rounded-full spinner"></div>
+          <p className="mt-4 text-white/80 text-lg">날씨 정보를 불러오는 중...</p>
+        </div>
+      );
+    }
+
+    function ErrorMessage({ message }) {
+      return (
+        <div className="fade-in bg-red-500/20 backdrop-blur-sm border border-red-400/30 rounded-xl p-4 text-center mx-auto max-w-md">
+          <p className="text-red-100 text-lg font-medium">오류 발생</p>
+          <p className="text-red-200/80 mt-1">{message}</p>
+        </div>
+      );
+    }
+
+    // ========================================
+    // API Key Section
+    // ========================================
+    function ApiKeySection({ apiKey, setApiKey }) {
+      const [inputVal, setInputVal] = useState(apiKey);
+      const [isOpen, setIsOpen] = useState(!apiKey);
+
+      const handleSave = () => {
+        const trimmed = inputVal.trim();
+        if (trimmed) {
+          localStorage.setItem('owm_api_key', trimmed);
+          setApiKey(trimmed);
+          setIsOpen(false);
+        }
+      };
+
+      return (
+        <Card className="p-4 mb-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">&#128273;</span>
+              <span className="text-white font-medium">API Key</span>
+              {apiKey && (
+                <span className="text-xs bg-green-500/30 text-green-200 px-2 py-0.5 rounded-full">
+                  설정됨
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => setIsOpen(!isOpen)}
+              className="text-white/60 hover:text-white text-sm underline cursor-pointer"
+            >
+              {isOpen ? '접기' : '변경'}
+            </button>
+          </div>
+          {isOpen && (
+            <div className="mt-3 fade-in">
+              <div className="flex gap-2">
+                <Input
+                  type="password"
+                  value={inputVal}
+                  onChange={(e) => setInputVal(e.target.value)}
+                  placeholder="OpenWeatherMap API Key 입력"
+                  className="flex-1"
+                />
+                <Button onClick={handleSave} size="md">저장</Button>
+              </div>
+              {!apiKey && (
+                <p className="text-white/50 text-xs mt-2">
+                  <a
+                    href="https://home.openweathermap.org/users/sign_up"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline hover:text-white/70"
+                  >
+                    OpenWeatherMap
+                  </a>
+                  에서 무료 계정을 만들어 API Key를 발급받으세요.
+                </p>
+              )}
+            </div>
+          )}
+        </Card>
+      );
+    }
+
+    // ========================================
+    // Search Bar
+    // ========================================
+    function SearchBar({ onSearch, disabled }) {
+      const [city, setCity] = useState('');
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        if (city.trim()) {
+          onSearch(city.trim());
+        }
+      };
+
+      return (
+        <div className="mb-6">
+          <form onSubmit={handleSubmit} className="flex gap-2 mb-3">
+            <Input
+              value={city}
+              onChange={(e) => setCity(e.target.value)}
+              placeholder="도시 이름 검색 (예: Seoul, Tokyo)"
+              className="flex-1"
+              icon="&#128269;"
+            />
+            <Button onClick={handleSubmit} disabled={disabled || !city.trim()} size="md">
+              검색
+            </Button>
+          </form>
+          <div className="flex flex-wrap gap-2">
+            {QUICK_CITIES.map((c) => (
+              <Button
+                key={c.query}
+                variant="secondary"
+                size="sm"
+                onClick={() => { setCity(c.query); onSearch(c.query); }}
+                disabled={disabled}
+              >
+                {c.name}
+              </Button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Current Weather Display
+    // ========================================
+    function CurrentWeather({ data }) {
+      const { main, weather, wind, visibility, sys, name, timezone } = data;
+      const w = weather[0];
+
+      const infoItems = [
+        { label: '체감 온도', value: `${Math.round(main.feels_like)}°C`, icon: '&#127777;' },
+        { label: '습도', value: `${main.humidity}%`, icon: '&#128167;' },
+        { label: '풍속', value: `${wind.speed} m/s`, icon: '&#127788;' },
+        { label: '최고 온도', value: `${Math.round(main.temp_max)}°C`, icon: '&#9650;' },
+        { label: '최저 온도', value: `${Math.round(main.temp_min)}°C`, icon: '&#9660;' },
+        { label: '가시거리', value: `${(visibility / 1000).toFixed(1)} km`, icon: '&#128065;' },
+        { label: '기압', value: `${main.pressure} hPa`, icon: '&#9878;' },
+        { label: '일출', value: formatTime(sys.sunrise, timezone), icon: '&#127749;' },
+        { label: '일몰', value: formatTime(sys.sunset, timezone), icon: '&#127751;' },
+      ];
+
+      return (
+        <Card className="p-6 mb-6 fade-in">
+          <div className="text-center mb-4">
+            <h2 className="text-3xl font-bold text-white">{name}</h2>
+            <p className="text-white/60 text-sm">{sys.country}</p>
+          </div>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-6">
+            <img
+              src={ICON_URL(w.icon)}
+              alt={w.description}
+              className="w-28 h-28 drop-shadow-lg"
+            />
+            <div className="text-center sm:text-left">
+              <p className="text-6xl font-bold text-white">{Math.round(main.temp)}°C</p>
+              <p className="text-xl text-white/80 capitalize mt-1">{w.description}</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-9 gap-3">
+            {infoItems.map((item) => (
+              <div
+                key={item.label}
+                className="bg-white/10 rounded-xl p-3 text-center"
+              >
+                <p className="text-lg" dangerouslySetInnerHTML={{ __html: item.icon }}></p>
+                <p className="text-white/60 text-xs mt-1">{item.label}</p>
+                <p className="text-white font-semibold text-sm mt-0.5">{item.value}</p>
+              </div>
+            ))}
+          </div>
+        </Card>
+      );
+    }
+
+    // ========================================
+    // 5-Day Forecast
+    // ========================================
+    function Forecast({ data }) {
+      const dailyData = useMemo(() => {
+        const grouped = {};
+        data.list.forEach((item) => {
+          const dateKey = item.dt_txt.split(' ')[0];
+          if (!grouped[dateKey]) {
+            grouped[dateKey] = [];
+          }
+          grouped[dateKey].push(item);
+        });
+
+        return Object.entries(grouped).slice(0, 5).map(([date, items]) => {
+          const temps = items.map((i) => i.main.temp);
+          const minTemp = Math.min(...temps);
+          const maxTemp = Math.max(...temps);
+          const midItem = items[Math.floor(items.length / 2)];
+          return {
+            date,
+            dateLabel: formatDate(date),
+            minTemp: Math.round(minTemp),
+            maxTemp: Math.round(maxTemp),
+            icon: midItem.weather[0].icon,
+            description: midItem.weather[0].description,
+            humidity: Math.round(items.reduce((s, i) => s + i.main.humidity, 0) / items.length),
+            windSpeed: (items.reduce((s, i) => s + i.wind.speed, 0) / items.length).toFixed(1),
+          };
+        });
+      }, [data]);
+
+      return (
+        <Card className="p-6 mb-6 fade-in">
+          <h3 className="text-xl font-bold text-white mb-4">5일 예보</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+            {dailyData.map((day) => (
+              <div
+                key={day.date}
+                className="bg-white/10 rounded-xl p-4 text-center hover:bg-white/20 transition-colors"
+              >
+                <p className="text-white font-semibold text-sm">{day.dateLabel}</p>
+                <img
+                  src={ICON_URL(day.icon)}
+                  alt={day.description}
+                  className="w-16 h-16 mx-auto"
+                />
+                <p className="text-white/80 text-xs capitalize">{day.description}</p>
+                <div className="flex justify-center gap-2 mt-2 text-sm">
+                  <span className="text-red-300 font-bold">{day.maxTemp}°</span>
+                  <span className="text-blue-300 font-bold">{day.minTemp}°</span>
+                </div>
+                <div className="mt-2 text-xs text-white/50 space-y-0.5">
+                  <p>&#128167; {day.humidity}%</p>
+                  <p>&#127788; {day.windSpeed}m/s</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      );
+    }
+
+    // ========================================
+    // Leaflet Map
+    // ========================================
+    function WeatherMap({ lat, lon, cityName, userLocation }) {
+      const mapContainerRef = useRef(null);
+      const mapInstanceRef = useRef(null);
+      const cityMarkerRef = useRef(null);
+      const userMarkerRef = useRef(null);
+
+      // 내 위치 아이콘 (파란 원)
+      const userIcon = L.divIcon({
+        className: '',
+        html: `<div style="
+          width:18px;height:18px;background:#3b82f6;border:3px solid white;
+          border-radius:50%;box-shadow:0 0 0 3px rgba(59,130,246,0.4);
+        "></div>`,
+        iconSize: [18, 18],
+        iconAnchor: [9, 9],
+      });
+
+      useEffect(() => {
+        if (!mapContainerRef.current) return;
+
+        if (!mapInstanceRef.current) {
+          const map = L.map(mapContainerRef.current).setView([lat, lon], 10);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors',
+          }).addTo(map);
+          mapInstanceRef.current = map;
+          cityMarkerRef.current = L.marker([lat, lon])
+            .addTo(map)
+            .bindPopup(`📍 ${cityName}`)
+            .openPopup();
+        } else {
+          mapInstanceRef.current.setView([lat, lon], 10);
+          if (cityMarkerRef.current) {
+            cityMarkerRef.current.setLatLng([lat, lon]).setPopupContent(`📍 ${cityName}`).openPopup();
+          }
+        }
+
+        setTimeout(() => {
+          mapInstanceRef.current && mapInstanceRef.current.invalidateSize();
+        }, 200);
+      }, [lat, lon, cityName]);
+
+      // 내 위치 마커 추가/업데이트
+      useEffect(() => {
+        if (!mapInstanceRef.current || !userLocation) return;
+
+        if (!userMarkerRef.current) {
+          userMarkerRef.current = L.marker([userLocation.lat, userLocation.lon], { icon: userIcon })
+            .addTo(mapInstanceRef.current)
+            .bindPopup('🙋 내 위치');
+        } else {
+          userMarkerRef.current.setLatLng([userLocation.lat, userLocation.lon]);
+        }
+
+        // 도시와 내 위치 둘 다 보이도록 지도 범위 조정
+        const bounds = L.latLngBounds(
+          [lat, lon],
+          [userLocation.lat, userLocation.lon]
+        );
+        mapInstanceRef.current.fitBounds(bounds, { padding: [50, 50] });
+      }, [userLocation, lat, lon]);
+
+      // Cleanup on unmount
+      useEffect(() => {
+        return () => {
+          if (mapInstanceRef.current) {
+            mapInstanceRef.current.remove();
+            mapInstanceRef.current = null;
+            cityMarkerRef.current = null;
+            userMarkerRef.current = null;
+          }
+        };
+      }, []);
+
+      return (
+        <Card className="overflow-hidden mb-6 fade-in">
+          <div className="flex items-center justify-between p-4 pb-2">
+            <h3 className="text-xl font-bold text-white">🗺️ 지도</h3>
+            <div className="flex items-center gap-4 text-sm text-white/70">
+              <span className="flex items-center gap-1">
+                <span style={{display:'inline-block',width:12,height:12,background:'#ef4444',borderRadius:'50%',border:'2px solid white'}}></span>
+                {cityName}
+              </span>
+              {userLocation && (
+                <span className="flex items-center gap-1">
+                  <span style={{display:'inline-block',width:12,height:12,background:'#3b82f6',borderRadius:'50%',border:'2px solid white'}}></span>
+                  내 위치
+                </span>
+              )}
+            </div>
+          </div>
+          <div ref={mapContainerRef} style={{ height: '320px', width: '100%' }}></div>
+        </Card>
+      );
+    }
+
+    // ========================================
+    // App Component
+    // ========================================
+    function App() {
+      const [apiKey] = useState('1d5926b624ef458b103acdefc47d5cbc');
+      const [weatherData, setWeatherData] = useState(null);
+      const [forecastData, setForecastData] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState(null);
+      const [userLocation, setUserLocation] = useState(null);
+      const [geoLoading, setGeoLoading] = useState(false);
+
+      const bgGradient = useMemo(() => {
+        if (weatherData) {
+          return getBackgroundGradient(weatherData.weather[0].main);
+        }
+        return 'from-sky-400 via-blue-500 to-blue-600';
+      }, [weatherData]);
+
+      const textColor = useMemo(() => {
+        if (weatherData) {
+          return getTextColor(weatherData.weather[0].main);
+        }
+        return 'text-white';
+      }, [weatherData]);
+
+      const fetchWeather = useCallback(async (city) => {
+        setLoading(true);
+        setError(null);
+
+        try {
+          // Step 1: Geocoding API로 도시명(한글 포함) → 위도/경도 변환
+          const geoRes = await fetch(
+            `https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(city)}&limit=1&appid=${apiKey}`
+          );
+          if (!geoRes.ok) {
+            if (geoRes.status === 401) throw new Error('API Key가 유효하지 않습니다.');
+            throw new Error(`오류가 발생했습니다 (${geoRes.status})`);
+          }
+          const geoData = await geoRes.json();
+          if (!geoData || geoData.length === 0) {
+            throw new Error(`"${city}" 도시를 찾을 수 없습니다. 다른 이름으로 검색해보세요.`);
+          }
+
+          const { lat, lon } = geoData[0];
+
+          // Step 2: 좌표로 날씨 + 예보 동시 요청
+          const [weatherRes, forecastRes] = await Promise.all([
+            fetch(`${WEATHER_API_BASE}/weather?lat=${lat}&lon=${lon}&appid=${apiKey}&units=metric&lang=kr`),
+            fetch(`${WEATHER_API_BASE}/forecast?lat=${lat}&lon=${lon}&appid=${apiKey}&units=metric&lang=kr`),
+          ]);
+
+          if (!weatherRes.ok) {
+            const errData = await weatherRes.json().catch(() => ({}));
+            throw new Error(errData.message || `날씨 데이터를 불러오지 못했습니다 (${weatherRes.status})`);
+          }
+
+          const weather = await weatherRes.json();
+          const forecast = await forecastRes.json();
+
+          setWeatherData(weather);
+          setForecastData(forecast);
+        } catch (err) {
+          setError(err.message);
+          setWeatherData(null);
+          setForecastData(null);
+        } finally {
+          setLoading(false);
+        }
+      }, [apiKey]);
+
+      // IP 기반 위치 폴백 (HTTP 환경에서도 동작)
+      const detectByIP = useCallback(async () => {
+        const res = await fetch('https://ip-api.com/json/?fields=lat,lon,city,regionName,country');
+        if (!res.ok) throw new Error('IP 위치 조회 실패');
+        const data = await res.json();
+        if (!data.lat) throw new Error('IP 위치 데이터 없음');
+        setUserLocation({ lat: data.lat, lon: data.lon });
+        const cityName = data.city || data.regionName || data.country;
+        await fetchWeather(cityName);
+      }, [fetchWeather]);
+
+      const detectLocation = useCallback(() => {
+        setGeoLoading(true);
+        setError(null);
+
+        // GPS 우선 시도, 실패 시 IP 기반으로 폴백
+        const fallbackToIP = async () => {
+          try {
+            await detectByIP();
+          } catch (e) {
+            setError('위치를 자동으로 가져오지 못했습니다. 도시 이름을 직접 검색해주세요.');
+          } finally {
+            setGeoLoading(false);
+          }
+        };
+
+        if (!navigator.geolocation) {
+          fallbackToIP();
+          return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+          async (pos) => {
+            const { latitude: lat, longitude: lon } = pos.coords;
+            setUserLocation({ lat, lon });
+            try {
+              const res = await fetch(
+                `https://api.openweathermap.org/geo/1.0/reverse?lat=${lat}&lon=${lon}&limit=1&appid=${apiKey}`
+              );
+              const data = await res.json();
+              if (data && data.length > 0) {
+                const cityName = data[0].local_names?.ko || data[0].name;
+                await fetchWeather(cityName);
+              }
+            } catch (e) {
+              setError('위치 기반 날씨를 불러오지 못했습니다.');
+            } finally {
+              setGeoLoading(false);
+            }
+          },
+          () => fallbackToIP(),  // GPS 실패(권한 거부 포함) → IP 폴백
+          { timeout: 8000 }
+        );
+      }, [apiKey, fetchWeather, detectByIP]);
+
+      // 앱 시작 시 내 위치 날씨 자동 로드
+      useEffect(() => {
+        detectLocation();
+      }, [detectLocation]);
+
+      return (
+        <div className={`min-h-screen bg-gradient-to-br ${bgGradient} ${textColor} transition-all duration-700`}>
+          <div className="max-w-4xl mx-auto px-4 py-8">
+            {/* Header */}
+            <div className="text-center mb-8">
+              <h1 className="text-4xl font-extrabold tracking-tight">
+                &#9925; 날씨 앱
+              </h1>
+              <p className="text-white/60 mt-1">전 세계 도시의 실시간 날씨 정보</p>
+            </div>
+
+            {/* Search + 내 위치 버튼 */}
+            <div className="flex gap-2 mb-2">
+              <div className="flex-1">
+                <SearchBar onSearch={fetchWeather} disabled={loading || geoLoading} />
+              </div>
+              <button
+                onClick={detectLocation}
+                disabled={loading || geoLoading}
+                className="flex-shrink-0 flex items-center gap-2 bg-white/20 hover:bg-white/30 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold px-4 py-3 rounded-xl transition-colors backdrop-blur-sm border border-white/20"
+                title="내 위치로 날씨 검색"
+              >
+                {geoLoading ? (
+                  <svg className="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                  </svg>
+                ) : (
+                  <span className="text-xl">📍</span>
+                )}
+                <span className="hidden sm:inline">{geoLoading ? '위치 확인 중...' : '내 위치'}</span>
+              </button>
+            </div>
+
+            {/* Loading */}
+            {loading && <Spinner />}
+
+            {/* Error */}
+            {error && !loading && <ErrorMessage message={error} />}
+
+
+            {/* Results */}
+            {!loading && !error && weatherData && (
+              <>
+                <CurrentWeather data={weatherData} />
+                {forecastData && <Forecast data={forecastData} />}
+                <WeatherMap
+                  lat={weatherData.coord.lat}
+                  lon={weatherData.coord.lon}
+                  cityName={weatherData.name}
+                  userLocation={userLocation}
+                />
+              </>
+            )}
+
+            {/* Empty state with key but no search */}
+            {apiKey && !loading && !error && !weatherData && (
+              <Card className="p-8 text-center fade-in">
+                <p className="text-5xl mb-4">&#127326;</p>
+                <p className="text-white text-xl font-semibold">도시를 검색해보세요</p>
+                <p className="text-white/60 mt-2">
+                  위 검색창에 도시 이름을 입력하거나, 📍 내 위치 버튼을 눌러보세요.
+                </p>
+              </Card>
+            )}
+
+            {/* Footer */}
+            <footer className="text-center text-white/30 text-xs mt-12 pb-4">
+              Powered by OpenWeatherMap &middot; OpenStreetMap
+            </footer>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

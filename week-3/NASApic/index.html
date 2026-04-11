@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NASA APOD - Astronomy Picture of the Day</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Inter:wght@300;400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            cosmos: {
+              900: '#05080f',
+              800: '#0a1020',
+              700: '#0f1a35',
+              600: '#15244a',
+            },
+            gold: {
+              400: '#d4a843',
+              300: '#e8c468',
+              200: '#f0d890',
+            }
+          },
+          fontFamily: {
+            display: ['Playfair Display', 'serif'],
+            body: ['Inter', 'sans-serif'],
+            mono: ['Space Mono', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #05080f;
+    }
+
+    .magazine-columns {
+      column-count: 1;
+      column-gap: 2.5rem;
+    }
+    @media (min-width: 768px) {
+      .magazine-columns {
+        column-count: 2;
+      }
+    }
+    .magazine-columns p {
+      break-inside: avoid;
+    }
+
+    .hero-image-wrapper:hover .hero-image {
+      transform: scale(1.03);
+    }
+
+    .skeleton-pulse {
+      background: linear-gradient(
+        90deg,
+        #0f1a35 25%,
+        #15244a 50%,
+        #0f1a35 75%
+      );
+      background-size: 200% 100%;
+      animation: pulse-sweep 1.8s ease-in-out infinite;
+    }
+    @keyframes pulse-sweep {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    @keyframes fade-in-up {
+      from {
+        opacity: 0;
+        transform: translateY(24px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    .animate-fade-in-up {
+      animation: fade-in-up 0.8s ease-out forwards;
+    }
+
+    @keyframes twinkle {
+      0%, 100% { opacity: 0.3; }
+      50% { opacity: 1; }
+    }
+    .twinkle-1 { animation: twinkle 3s ease-in-out infinite; }
+    .twinkle-2 { animation: twinkle 3s ease-in-out 1s infinite; }
+    .twinkle-3 { animation: twinkle 3s ease-in-out 2s infinite; }
+
+    .drop-cap::first-letter {
+      float: left;
+      font-family: 'Playfair Display', serif;
+      font-size: 3.5rem;
+      line-height: 0.8;
+      padding-right: 0.5rem;
+      padding-top: 0.25rem;
+      color: #d4a843;
+      font-weight: 900;
+    }
+  </style>
+</head>
+<body class="min-h-screen text-white font-body">
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useMemo } = React;
+
+    // ========================================
+    // DATA LAYER - fetchAPOD
+    // ========================================
+
+    /**
+     * NASA APOD API fetcher.
+     * - 엔드포인트: https://api.nasa.gov/planetary/apod
+     * - 파라미터: ?api_key=API_KEY&date=YYYY-MM-DD
+     */
+    const NASA_API_KEY = 'CJdBZ53nZQXBvf76WcRgqBSeBzNrt0dAZvbPhNcj';
+    const NASA_API_URL = 'https://api.nasa.gov/planetary/apod';
+
+    async function fetchAPOD(date) {
+      const params = new URLSearchParams({ api_key: NASA_API_KEY });
+      if (date) params.append('date', date);
+      const response = await fetch(`${NASA_API_URL}?${params}`);
+      // NASA API sometimes returns 503 with valid JSON data — try parsing regardless
+      const json = await response.json();
+      if (json && json.date) return json;
+      throw new Error(`NASA API error: ${response.status}`);
+    }
+
+    // ========================================
+    // UTILITY FUNCTIONS
+    // ========================================
+
+    function formatDate(dateStr) {
+      const d = new Date(dateStr + 'T00:00:00');
+      return d.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      }).toUpperCase();
+    }
+
+    // ========================================
+    // DESIGN SYSTEM COMPONENTS
+    // ========================================
+
+    function StarDivider({ className = '' }) {
+      return (
+        <div className={`flex items-center justify-center gap-3 py-6 select-none ${className}`}>
+          <span className="text-gold-400/40 text-xs twinkle-1">&#10022;</span>
+          <span className="w-16 h-px bg-gradient-to-r from-transparent via-gold-400/30 to-transparent"></span>
+          <span className="text-gold-300 text-sm twinkle-2">&#10022;</span>
+          <span className="w-16 h-px bg-gradient-to-r from-transparent via-gold-400/30 to-transparent"></span>
+          <span className="text-gold-400/40 text-xs twinkle-3">&#10022;</span>
+        </div>
+      );
+    }
+
+    function Button({ children, variant = 'primary', size = 'md', onClick, disabled, className = '' }) {
+      const base = 'inline-flex items-center justify-center font-mono uppercase tracking-widest transition-all duration-300 border';
+      const variants = {
+        primary: 'border-gold-400 text-gold-400 hover:bg-gold-400 hover:text-cosmos-900 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gold-400',
+        secondary: 'border-white/20 text-white/70 hover:border-white/50 hover:text-white disabled:opacity-40',
+        ghost: 'border-transparent text-gold-300 hover:text-gold-200 hover:border-gold-400/20 disabled:opacity-40',
+      };
+      const sizes = {
+        sm: 'px-4 py-1.5 text-[10px]',
+        md: 'px-6 py-2.5 text-xs',
+        lg: 'px-8 py-3 text-sm',
+      };
+      return (
+        <button
+          className={`${base} ${variants[variant]} ${sizes[size]} ${className}`}
+          onClick={onClick}
+          disabled={disabled}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    function SkeletonHero() {
+      return (
+        <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
+          <div className="absolute inset-0 skeleton-pulse rounded-sm"></div>
+          <div className="absolute bottom-0 left-0 right-0 p-6 md:p-10 space-y-4">
+            <div className="skeleton-pulse h-4 w-32 rounded"></div>
+            <div className="skeleton-pulse h-8 w-2/3 rounded"></div>
+            <div className="skeleton-pulse h-4 w-48 rounded"></div>
+          </div>
+        </div>
+      );
+    }
+
+    function SkeletonText() {
+      return (
+        <div className="space-y-3 py-8">
+          {[...Array(6)].map((_, i) => (
+            <div key={i} className="skeleton-pulse h-4 rounded" style={{ width: `${85 + Math.random() * 15}%` }}></div>
+          ))}
+        </div>
+      );
+    }
+
+    // ========================================
+    // PAGE COMPONENTS
+    // ========================================
+
+    function Header() {
+      return (
+        <header className="relative py-8 md:py-12 text-center">
+          <div className="absolute inset-0 bg-gradient-to-b from-cosmos-700/30 to-transparent pointer-events-none"></div>
+          <div className="relative z-10 max-w-4xl mx-auto px-4">
+            <p className="font-mono text-[10px] md:text-xs tracking-[0.35em] text-gold-400/70 mb-3">
+              NATIONAL AERONAUTICS AND SPACE ADMINISTRATION
+            </p>
+            <h1 className="font-display text-2xl sm:text-3xl md:text-5xl font-900 tracking-[0.12em] text-white leading-tight">
+              ASTRONOMY
+              <span className="block text-gold-300">PICTURE OF THE DAY</span>
+            </h1>
+            <div className="flex items-center justify-center gap-2 mt-4">
+              <span className="w-8 h-px bg-gold-400/40"></span>
+              <span className="font-mono text-[9px] tracking-[0.5em] text-white/40">APOD</span>
+              <span className="w-8 h-px bg-gold-400/40"></span>
+            </div>
+          </div>
+        </header>
+      );
+    }
+
+    function HeroImage({ data, imageLoaded, onImageLoad }) {
+      const isVideo = data.media_type === 'video';
+
+      const overlays = (
+        <>
+          {/* gradient overlay */}
+          <div className="absolute inset-0 bg-gradient-to-t from-cosmos-900 via-cosmos-900/20 to-transparent pointer-events-none"></div>
+          <div className="absolute inset-0 bg-gradient-to-r from-cosmos-900/30 to-transparent pointer-events-none"></div>
+
+          {/* date overlay */}
+          <div className="absolute top-4 right-4 md:top-6 md:right-6">
+            <span className="font-mono text-[10px] md:text-xs tracking-[0.3em] text-white/80 bg-cosmos-900/60 backdrop-blur-sm px-3 py-1.5 border border-white/10">
+              {formatDate(data.date)}
+            </span>
+          </div>
+
+          {/* HD badge */}
+          {data.hdurl && (
+            <a
+              href={data.hdurl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="absolute top-4 left-4 md:top-6 md:left-6 font-mono text-[9px] tracking-[0.3em] text-gold-400/80 bg-cosmos-900/60 backdrop-blur-sm px-2.5 py-1 border border-gold-400/20 hover:border-gold-400/60 hover:text-gold-300 transition-all duration-300"
+              title="View full resolution"
+            >
+              HD
+            </a>
+          )}
+
+          {/* bottom info overlay */}
+          <div className="absolute bottom-0 left-0 right-0 p-5 md:p-10">
+            <h2 className="font-display text-3xl sm:text-4xl md:text-6xl font-900 tracking-wide text-white leading-none mb-3">
+              {data.title}
+            </h2>
+            {data.copyright && (
+              <p className="font-mono text-[10px] md:text-xs tracking-[0.2em] text-gold-400/70">
+                &#169; {data.copyright}
+              </p>
+            )}
+          </div>
+        </>
+      );
+
+      if (isVideo) {
+        return (
+          <div className="relative group overflow-hidden cursor-pointer">
+            <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
+              <iframe
+                src={data.url}
+                className="absolute inset-0 w-full h-full"
+                title={data.title}
+                allowFullScreen
+                frameBorder="0"
+              />
+              {overlays}
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="relative group hero-image-wrapper overflow-hidden cursor-pointer">
+          {!imageLoaded && <SkeletonHero />}
+          <div className={imageLoaded ? 'relative overflow-hidden' : 'absolute inset-0 opacity-0 overflow-hidden'}>
+            <img
+              src={data.url}
+              alt={data.title}
+              className="hero-image w-full object-cover transition-transform duration-700 ease-out"
+              style={{ maxHeight: '75vh' }}
+              onLoad={onImageLoad}
+            />
+            {overlays}
+          </div>
+        </div>
+      );
+    }
+
+    function ExplanationSection({ explanation }) {
+      const [expanded, setExpanded] = useState(false);
+      const truncateLength = 600;
+      const needsTruncation = explanation.length > truncateLength;
+      const displayText = expanded || !needsTruncation
+        ? explanation
+        : explanation.slice(0, truncateLength).replace(/\s+\S*$/, '') + '...';
+
+      const paragraphs = useMemo(() => {
+        const words = displayText.split(' ');
+        const mid = Math.ceil(words.length / 2);
+        // Split into two natural paragraphs for magazine feel
+        if (words.length > 80) {
+          return [
+            words.slice(0, mid).join(' '),
+            words.slice(mid).join(' '),
+          ];
+        }
+        return [displayText];
+      }, [displayText]);
+
+      return (
+        <section className="max-w-5xl mx-auto px-5 md:px-8 py-8 md:py-14">
+          <div className="flex items-center gap-4 mb-8">
+            <span className="font-mono text-[10px] tracking-[0.5em] text-gold-400/50 uppercase">
+              About this image
+            </span>
+            <span className="flex-1 h-px bg-gradient-to-r from-gold-400/20 to-transparent"></span>
+          </div>
+
+          <div className="magazine-columns text-white/80 font-body text-base md:text-lg leading-relaxed md:leading-8 space-y-6">
+            {paragraphs.map((p, i) => (
+              <p key={i} className={i === 0 ? 'drop-cap' : ''}>
+                {p}
+              </p>
+            ))}
+          </div>
+
+          {needsTruncation && (
+            <div className="mt-8 text-center">
+              <Button variant="ghost" size="sm" onClick={() => setExpanded(!expanded)}>
+                {expanded ? '- Read Less' : '+ Read More'}
+              </Button>
+            </div>
+          )}
+        </section>
+      );
+    }
+
+    function ExploreMore() {
+      return (
+        <section className="max-w-5xl mx-auto px-5 md:px-8 pb-16 md:pb-24">
+          <StarDivider />
+
+          <div className="text-center">
+            <h3 className="font-mono text-[10px] md:text-xs tracking-[0.5em] text-gold-400/50 uppercase mb-6">
+              Explore More
+            </h3>
+
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+              <Button variant="secondary" size="md" disabled>
+                &#8592; Previous Day
+              </Button>
+              <Button variant="primary" size="md" disabled>
+                Random Date
+              </Button>
+              <Button variant="secondary" size="md" disabled>
+                Next Day &#8594;
+              </Button>
+            </div>
+
+            <p className="font-mono text-[9px] tracking-wider text-white/25 mt-6">
+              Date navigation will be available after API integration
+            </p>
+          </div>
+        </section>
+      );
+    }
+
+    function Footer() {
+      return (
+        <footer className="border-t border-white/5 py-8 text-center">
+          <p className="font-mono text-[9px] tracking-[0.4em] text-white/20 uppercase">
+            Data provided by NASA Open APIs &middot; APOD
+          </p>
+        </footer>
+      );
+    }
+
+    // ========================================
+    // APP COMPONENT
+    // ========================================
+
+    function App() {
+      const [apodData, setApodData] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+      const [imageLoaded, setImageLoaded] = useState(false);
+
+      useEffect(() => {
+        let cancelled = false;
+        setLoading(true);
+        setError(null);
+        setImageLoaded(false);
+
+        fetchAPOD()
+          .then((data) => {
+            if (!cancelled) setApodData(data);
+          })
+          .catch((err) => {
+            if (!cancelled) setError(err.message || 'Failed to load data');
+          })
+          .finally(() => {
+            if (!cancelled) setLoading(false);
+          });
+
+        return () => { cancelled = true; };
+      }, []);
+
+      const handleImageLoad = useCallback(() => setImageLoaded(true), []);
+
+      if (error) {
+        return (
+          <div className="min-h-screen flex flex-col items-center justify-center text-center px-4">
+            <p className="font-mono text-xs tracking-widest text-red-400 mb-4">TRANSMISSION ERROR</p>
+            <p className="text-white/50 text-sm mb-6">{error}</p>
+            <Button variant="primary" size="md" onClick={() => window.location.reload()}>
+              Retry Connection
+            </Button>
+          </div>
+        );
+      }
+
+      return (
+        <div className="min-h-screen bg-cosmos-900">
+          <Header />
+
+          {loading && !apodData ? (
+            <div className="max-w-6xl mx-auto px-4">
+              <SkeletonHero />
+              <SkeletonText />
+            </div>
+          ) : apodData ? (
+            <main className="animate-fade-in-up">
+              <div className="max-w-6xl mx-auto">
+                <HeroImage
+                  data={apodData}
+                  imageLoaded={imageLoaded}
+                  onImageLoad={handleImageLoad}
+                />
+              </div>
+
+              <StarDivider />
+
+              <ExplanationSection explanation={apodData.explanation} />
+
+              <ExploreMore />
+            </main>
+          ) : null}
+
+          <Footer />
+        </div>
+      );
+    }
+
+    // ========================================
+    // RENDER
+    // ========================================
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
