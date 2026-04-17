@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>포켓몬 도감</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    @keyframes cardHover {
+      from { transform: translateY(0); }
+      to { transform: translateY(-8px); }
+    }
+    .card-hover:hover {
+      transform: translateY(-8px);
+      box-shadow: 0 12px 28px rgba(0,0,0,0.15);
+    }
+    .card-hover {
+      transition: transform 0.25s ease, box-shadow 0.25s ease;
+    }
+    .modal-backdrop {
+      animation: fadeIn 0.2s ease;
+    }
+    .modal-content {
+      animation: slideUp 0.25s ease;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(30px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .stat-bar {
+      transition: width 0.5s ease;
+    }
+  </style>
+</head>
+<body class="bg-gradient-to-b from-red-50 via-white to-blue-50 min-h-screen">
+  <div id="root"></div>
+  <script type="text/babel">
+    // ========================================
+    // React Hooks Destructuring
+    // ========================================
+    const { useState, useMemo, useEffect, useCallback } = React;
+
+    // ========================================
+    // API
+    // ========================================
+    const API_BASE = '/api';
+
+    const TYPE_COLORS = {
+      "\ud480": { bg: "bg-green-500", text: "text-white" },
+      "\ub3c5": { bg: "bg-purple-500", text: "text-white" },
+      "\ubd88\uaf43": { bg: "bg-orange-500", text: "text-white" },
+      "\ubb3c": { bg: "bg-blue-500", text: "text-white" },
+      "\uc804\uae30": { bg: "bg-yellow-400", text: "text-gray-800" },
+      "\ub178\ub9d0": { bg: "bg-gray-400", text: "text-white" },
+      "\ud398\uc5b4\ub9ac": { bg: "bg-pink-400", text: "text-white" }
+    };
+
+    const TYPE_CARD_BG = {
+      "\ud480": "from-green-100 to-green-50",
+      "\ub3c5": "from-purple-100 to-purple-50",
+      "\ubd88\uaf43": "from-orange-100 to-orange-50",
+      "\ubb3c": "from-blue-100 to-blue-50",
+      "\uc804\uae30": "from-yellow-100 to-yellow-50",
+      "\ub178\ub9d0": "from-gray-100 to-gray-50",
+      "\ud398\uc5b4\ub9ac": "from-pink-100 to-pink-50"
+    };
+
+    const STAT_COLORS = {
+      hp: "bg-red-400",
+      attack: "bg-orange-400",
+      defense: "bg-yellow-400",
+      spAtk: "bg-blue-400",
+      spDef: "bg-green-400",
+      speed: "bg-pink-400"
+    };
+
+    const STAT_LABELS = {
+      hp: "HP",
+      attack: "\uacf5\uaca9",
+      defense: "\ubc29\uc5b4",
+      spAtk: "\ud2b9\uacf5",
+      spDef: "\ud2b9\ubc29",
+      speed: "\uc2a4\ud53c\ub4dc"
+    };
+
+    // ========================================
+    // Design System Components
+    // ========================================
+    function Badge({ children, type, className = "" }) {
+      const colors = TYPE_COLORS[type] || { bg: "bg-gray-400", text: "text-white" };
+      return (
+        <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold ${colors.bg} ${colors.text} ${className}`}>
+          {children}
+        </span>
+      );
+    }
+
+    function Modal({ isOpen, onClose, children }) {
+      useEffect(() => {
+        if (isOpen) {
+          document.body.style.overflow = "hidden";
+        } else {
+          document.body.style.overflow = "";
+        }
+        return () => { document.body.style.overflow = ""; };
+      }, [isOpen]);
+
+      if (!isOpen) return null;
+
+      return (
+        <div
+          className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+          onClick={onClose}
+        >
+          <div
+            className="modal-content bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {children}
+          </div>
+        </div>
+      );
+    }
+
+    function StatBar({ label, value, maxValue = 150, color }) {
+      const pct = Math.min((value / maxValue) * 100, 100);
+      return (
+        <div className="flex items-center gap-2 text-sm">
+          <span className="w-14 text-right text-gray-600 font-medium">{label}</span>
+          <span className="w-8 text-right font-bold text-gray-800">{value}</span>
+          <div className="flex-1 bg-gray-200 rounded-full h-3 overflow-hidden">
+            <div
+              className={`stat-bar h-full rounded-full ${color}`}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    function SearchInput({ value, onChange, placeholder }) {
+      return (
+        <div className="relative max-w-md mx-auto">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">
+            &#128269;
+          </span>
+          <input
+            type="text"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={placeholder}
+            className="w-full pl-10 pr-4 py-3 rounded-xl border-2 border-gray-200 focus:border-red-400 focus:outline-none text-gray-700 bg-white shadow-sm transition-colors"
+            aria-label={placeholder}
+          />
+        </div>
+      );
+    }
+
+    // ========================================
+    // Pokemon Card Component
+    // ========================================
+    function PokemonCard({ pokemon, onClick }) {
+      const cardBg = TYPE_CARD_BG[pokemon.types[0]] || "from-gray-100 to-gray-50";
+      const formattedId = `#${String(pokemon.id).padStart(3, "0")}`;
+
+      return (
+        <button
+          onClick={() => onClick(pokemon)}
+          className={`card-hover bg-gradient-to-br ${cardBg} rounded-2xl p-4 shadow-md cursor-pointer text-center w-full border border-white/60 focus:outline-none focus:ring-2 focus:ring-red-300`}
+          aria-label={`${pokemon.name} 상세 보기`}
+        >
+          <p className="text-xs text-gray-400 font-bold mb-1">{formattedId}</p>
+          <img
+            src={pokemon.image}
+            alt={pokemon.name}
+            className="w-24 h-24 mx-auto object-contain drop-shadow-md"
+            loading="lazy"
+          />
+          <h3 className="text-base font-bold text-gray-800 mt-2">{pokemon.name}</h3>
+          <p className="text-xs text-gray-400 mb-2">{pokemon.nameEn}</p>
+          <div className="flex justify-center gap-1.5 flex-wrap">
+            {pokemon.types.map((type) => (
+              <Badge key={type} type={type}>{type}</Badge>
+            ))}
+          </div>
+        </button>
+      );
+    }
+
+    // ========================================
+    // Pokemon Detail Modal Content
+    // ========================================
+    function PokemonDetail({ pokemon, onClose }) {
+      const formattedId = `#${String(pokemon.id).padStart(3, "0")}`;
+      const cardBg = TYPE_CARD_BG[pokemon.types[0]] || "from-gray-100 to-gray-50";
+
+      return (
+        <div>
+          {/* Header with image */}
+          <div className={`relative bg-gradient-to-br ${cardBg} rounded-t-2xl p-6 pb-4 text-center`}>
+            <button
+              onClick={onClose}
+              className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full bg-white/70 hover:bg-white text-gray-500 hover:text-gray-800 transition-colors text-lg font-bold"
+              aria-label="닫기"
+            >
+              &times;
+            </button>
+            <img
+              src={pokemon.image}
+              alt={pokemon.name}
+              className="w-40 h-40 mx-auto object-contain drop-shadow-lg"
+            />
+          </div>
+
+          {/* Info */}
+          <div className="p-6 space-y-5">
+            {/* Name and types */}
+            <div className="text-center">
+              <p className="text-sm text-gray-400 font-bold">{formattedId}</p>
+              <h2 className="text-2xl font-extrabold text-gray-800">{pokemon.name}</h2>
+              <p className="text-sm text-gray-400 mb-2">{pokemon.nameEn}</p>
+              <div className="flex justify-center gap-2">
+                {pokemon.types.map((type) => (
+                  <Badge key={type} type={type}>{type}</Badge>
+                ))}
+              </div>
+            </div>
+
+            {/* Height / Weight */}
+            <div className="flex justify-center gap-8">
+              <div className="text-center">
+                <p className="text-xs text-gray-400">키</p>
+                <p className="text-lg font-bold text-gray-700">{(pokemon.height / 10).toFixed(1)}m</p>
+              </div>
+              <div className="text-center">
+                <p className="text-xs text-gray-400">몸무게</p>
+                <p className="text-lg font-bold text-gray-700">{(pokemon.weight / 10).toFixed(1)}kg</p>
+              </div>
+            </div>
+
+            {/* Abilities */}
+            <div>
+              <h3 className="text-sm font-bold text-gray-500 mb-1.5">특성</h3>
+              <div className="flex flex-wrap gap-2">
+                {pokemon.abilities.map((a) => (
+                  <span key={a} className="px-3 py-1 bg-gray-100 rounded-lg text-sm text-gray-700 font-medium">
+                    {a}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Moves */}
+            <div>
+              <h3 className="text-sm font-bold text-gray-500 mb-1.5">기술</h3>
+              <div className="flex flex-wrap gap-2">
+                {pokemon.moves.map((m) => (
+                  <span key={m} className="px-3 py-1 bg-gray-100 rounded-lg text-sm text-gray-700 font-medium">
+                    {m}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Stats */}
+            <div>
+              <h3 className="text-sm font-bold text-gray-500 mb-2">능력치</h3>
+              <div className="space-y-2">
+                {Object.entries(pokemon.stats).map(([key, value]) => (
+                  <StatBar
+                    key={key}
+                    label={STAT_LABELS[key]}
+                    value={value}
+                    color={STAT_COLORS[key]}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // App Component
+    // ========================================
+    function App() {
+      const [pokemons, setPokemons] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+      const [search, setSearch] = useState("");
+      const [selected, setSelected] = useState(null);
+
+      useEffect(() => {
+        fetch(`${API_BASE}/pokemons`)
+          .then((res) => res.json())
+          .then((json) => {
+            if (json.success) setPokemons(json.data);
+            else setError("데이터를 불러오지 못했습니다.");
+          })
+          .catch(() => setError("서버에 연결할 수 없습니다."))
+          .finally(() => setLoading(false));
+      }, []);
+
+      const filtered = useMemo(() => {
+        if (!search.trim()) return pokemons;
+        const q = search.trim().toLowerCase();
+        return pokemons.filter(
+          (p) =>
+            p.name.toLowerCase().includes(q) ||
+            p.nameEn.toLowerCase().includes(q)
+        );
+      }, [search, pokemons]);
+
+      const handleKeyDown = useCallback((e) => {
+        if (e.key === "Escape" && selected) setSelected(null);
+      }, [selected]);
+
+      useEffect(() => {
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+      }, [handleKeyDown]);
+
+      return (
+        <div className="min-h-screen pb-12">
+          {/* Header */}
+          <header className="bg-gradient-to-r from-red-500 to-red-600 text-white py-6 shadow-lg">
+            <div className="max-w-5xl mx-auto px-4 text-center">
+              <h1 className="text-3xl font-extrabold tracking-tight flex items-center justify-center gap-2">
+                <span className="text-4xl" role="img" aria-label="포켓볼">&#x1F534;</span>
+                포켓몬 도감
+              </h1>
+              <p className="text-red-100 text-sm mt-1">Pokedex</p>
+            </div>
+          </header>
+
+          {/* Search */}
+          <div className="max-w-5xl mx-auto px-4 -mt-5">
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder="포켓몬 이름으로 검색 (한국어/영어)"
+            />
+          </div>
+
+          {/* Card Grid */}
+          <main className="max-w-5xl mx-auto px-4 mt-8">
+            {loading ? (
+              <div className="text-center py-16 text-gray-400">
+                <p className="text-5xl mb-3 animate-spin inline-block">&#9884;</p>
+                <p className="text-lg font-medium">포켓몬 불러오는 중...</p>
+              </div>
+            ) : error ? (
+              <div className="text-center py-16 text-red-400">
+                <p className="text-5xl mb-3">&#x26A0;</p>
+                <p className="text-lg font-medium">{error}</p>
+                <p className="text-sm mt-1">서버가 실행 중인지 확인해 주세요</p>
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="text-center py-16 text-gray-400">
+                <p className="text-5xl mb-3">&#x1F50D;</p>
+                <p className="text-lg font-medium">검색 결과가 없습니다</p>
+                <p className="text-sm mt-1">다른 이름으로 검색해 보세요</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+                {filtered.map((pokemon) => (
+                  <PokemonCard
+                    key={pokemon.id}
+                    pokemon={pokemon}
+                    onClick={setSelected}
+                  />
+                ))}
+              </div>
+            )}
+          </main>
+
+          {/* Detail Modal */}
+          <Modal isOpen={!!selected} onClose={() => setSelected(null)}>
+            {selected && (
+              <PokemonDetail pokemon={selected} onClose={() => setSelected(null)} />
+            )}
+          </Modal>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

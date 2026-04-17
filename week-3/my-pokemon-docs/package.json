@@ -1,0 +1,13 @@
+{
+  "name": "my-pokemon-docs",
+  "version": "1.0.0",
+  "description": "Pokemon documentation server with in-memory data",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}

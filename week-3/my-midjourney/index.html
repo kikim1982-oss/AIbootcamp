@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Midjourney - AI 이미지 생성기</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 0 20px rgba(139, 92, 246, 0.2); }
+      50% { box-shadow: 0 0 40px rgba(139, 92, 246, 0.45); }
+    }
+    @keyframes fade-in-up {
+      from { opacity: 0; transform: translateY(16px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes shimmer {
+      0% { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+    .animate-spin { animation: spin 1s linear infinite; }
+    .animate-pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
+    .animate-fade-in-up { animation: fade-in-up 0.4s ease-out forwards; }
+    .shimmer-bg {
+      background: linear-gradient(90deg, #ede9fe 25%, #ddd6fe 50%, #ede9fe 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s ease-in-out infinite;
+    }
+    body {
+      background: linear-gradient(135deg, #f5f3ff 0%, #fdf4ff 50%, #eff6ff 100%);
+      min-height: 100vh;
+    }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #f3f0ff; }
+    ::-webkit-scrollbar-thumb { background: #c4b5fd; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #a78bfa; }
+    textarea:focus, input:focus { outline: none; }
+  </style>
+</head>
+<body class="text-gray-800 min-h-screen">
+  <div id="root"></div>
+  <script type="text/babel">
+    // ========================================
+    // React Hooks Destructuring
+    // ========================================
+    const { useState, useEffect, useCallback, useRef, createContext, useContext } = React;
+
+    // ========================================
+    // Constants
+    // ========================================
+    const STORAGE_KEY_HISTORY = 'midjourney_prompt_history';
+    const MAX_HISTORY = 10;
+
+    // API는 백엔드 프록시를 통해 호출 (서버에서 FAL_API_KEY 환경변수 사용)
+    const API_BASE_URL = window.location.origin;
+
+    const IMAGE_SIZES = [
+      { label: '정사각형', value: 'square_hd', dimensions: '1024×1024', icon: '⬜' },
+      { label: '가로형', value: 'landscape_16_9', dimensions: '1344×768', icon: '🖼' },
+      { label: '세로형', value: 'portrait_16_9', dimensions: '768×1344', icon: '📱' },
+    ];
+
+    const IMAGE_COUNTS = [1, 2, 4];
+
+    const EXAMPLE_PROMPTS = [
+      '벚꽃이 흩날리는 조용한 일본 정원, 달빛이 반사되는 연못, 수채화 스타일',
+      '한국어 네온사인이 가득한 사이버펑크 도시 야경, 빗물에 젖은 골목길, 영화적 조명',
+      '우주 공간에서 별빛으로 그림을 그리는 우주인, 초현실주의 디지털 아트',
+      '눈 내리는 창밖과 따뜻한 벽난로, 아늑한 오두막 실내, 사실적인 사진 스타일',
+      '가을 단풍으로 물든 경복궁, 황금빛 노을, 풍경 사진',
+    ];
+
+    const STYLE_PRESETS = [
+      {
+        id: 'ghibli',
+        label: '지브리풍',
+        emoji: '🌿',
+        description: '따뜻하고 서정적인 지브리 애니메이션 스타일',
+        suffix: 'Studio Ghibli style, soft watercolor, warm nostalgic tones, hand-drawn animation, lush nature, whimsical',
+      },
+      {
+        id: 'gundam',
+        label: '건담 메카닉풍',
+        emoji: '🤖',
+        description: '정교한 기계 장갑, SF 메카닉 스타일',
+        suffix: 'Gundam mecha style, highly detailed mechanical armor, sci-fi, metallic surfaces, dynamic battle pose, dramatic lighting',
+      },
+      {
+        id: 'caricature',
+        label: '캐리커처풍',
+        emoji: '🎭',
+        description: '과장된 특징이 살아있는 만화 캐리커처',
+        suffix: 'caricature style, exaggerated facial features, bold cartoon outlines, vibrant flat colors, humorous',
+      },
+      {
+        id: 'dreamy',
+        label: '몽환적인 풍',
+        emoji: '✨',
+        description: '환상적이고 신비로운 동화 속 분위기',
+        suffix: 'dreamy ethereal atmosphere, soft bokeh, magical fairy tale, glowing particles, pastel colors, otherworldly',
+      },
+    ];
+
+    // ========================================
+    // Design System Components
+    // ========================================
+    function Button({ children, onClick, variant = 'primary', size = 'md', disabled = false, className = '', ...props }) {
+      const base = 'inline-flex items-center justify-center font-medium rounded-xl transition-all duration-200 focus:ring-2 focus:ring-violet-400 focus:ring-offset-2 focus:ring-offset-transparent disabled:opacity-50 disabled:cursor-not-allowed';
+      const variants = {
+        primary: 'bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white shadow-md shadow-violet-300/50 hover:shadow-violet-400/60',
+        secondary: 'bg-white hover:bg-violet-50 text-violet-700 border border-violet-200 hover:border-violet-300 shadow-sm',
+        ghost: 'bg-transparent hover:bg-violet-50 text-gray-500 hover:text-violet-700',
+        danger: 'bg-red-500 hover:bg-red-400 text-white shadow-sm',
+      };
+      const sizes = {
+        sm: 'px-3 py-1.5 text-xs gap-1.5',
+        md: 'px-4 py-2 text-sm gap-2',
+        lg: 'px-6 py-3 text-base gap-2',
+      };
+      return (
+        <button onClick={onClick} disabled={disabled} className={`${base} ${variants[variant]} ${sizes[size]} ${className}`} {...props}>
+          {children}
+        </button>
+      );
+    }
+
+    function Card({ children, className = '', ...props }) {
+      return (
+        <div className={`bg-white/80 backdrop-blur-sm border border-violet-100 rounded-2xl shadow-sm ${className}`} {...props}>
+          {children}
+        </div>
+      );
+    }
+
+    function Badge({ children, variant = 'default', className = '' }) {
+      const variants = {
+        default: 'bg-gray-100 text-gray-600',
+        purple: 'bg-violet-100 text-violet-700 border border-violet-200',
+        green: 'bg-emerald-100 text-emerald-700 border border-emerald-200',
+      };
+      return (
+        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${variants[variant]} ${className}`}>
+          {children}
+        </span>
+      );
+    }
+
+    function Spinner({ size = 'md', className = '' }) {
+      const sizes = { sm: 'w-4 h-4', md: 'w-6 h-6', lg: 'w-10 h-10' };
+      return (
+        <svg className={`animate-spin ${sizes[size]} ${className}`} viewBox="0 0 24 24" fill="none">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+      );
+    }
+
+    function IconButton({ icon, onClick, title, className = '', size = 'md' }) {
+      const sizes = { sm: 'p-1.5', md: 'p-2' };
+      return (
+        <button
+          onClick={onClick} title={title} aria-label={title}
+          className={`${sizes[size]} rounded-lg bg-white/80 backdrop-blur-sm hover:bg-violet-50 text-gray-600 hover:text-violet-700 transition-all duration-200 shadow-sm ${className}`}
+        >
+          {icon}
+        </button>
+      );
+    }
+
+    // ========================================
+    // SVG Icons
+    // ========================================
+    const Icons = {
+      Download: () => (
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3" />
+        </svg>
+      ),
+      Copy: () => (
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+        </svg>
+      ),
+      Sparkles: () => (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+        </svg>
+      ),
+      Clock: () => (
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      ),
+      Trash: () => (
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+        </svg>
+      ),
+      ChevronDown: () => (
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      ),
+      ChevronUp: () => (
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+        </svg>
+      ),
+      Menu: () => (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+      ),
+      X: () => (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      ),
+      Image: () => (
+        <svg className="w-16 h-16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+        </svg>
+      ),
+      Check: () => (
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+        </svg>
+      ),
+    };
+
+    // ========================================
+    // Utility Functions
+    // ========================================
+    function loadFromStorage(key, fallback) {
+      try {
+        const val = localStorage.getItem(key);
+        return val ? JSON.parse(val) : fallback;
+      } catch { return fallback; }
+    }
+
+    function saveToStorage(key, value) {
+      try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+    }
+
+    async function downloadImage(url, filename) {
+      try {
+        const res = await fetch(url);
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = filename || 'generated-image.png';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(blobUrl);
+      } catch { window.open(url, '_blank'); }
+    }
+
+    async function copyToClipboard(text) {
+      try { await navigator.clipboard.writeText(text); return true; }
+      catch { return false; }
+    }
+
+    // ========================================
+    // Image Size Selector
+    // ========================================
+    function ImageSizeSelector({ value, onChange }) {
+      return (
+        <div className="space-y-2">
+          <label className="text-sm font-semibold text-gray-700">이미지 크기</label>
+          <div className="grid grid-cols-3 gap-2">
+            {IMAGE_SIZES.map((size) => (
+              <button
+                key={size.value}
+                onClick={() => onChange(size.value)}
+                className={`flex flex-col items-center gap-1 p-2.5 rounded-xl border text-xs transition-all duration-200 ${
+                  value === size.value
+                    ? 'border-violet-400 bg-violet-50 text-violet-700 shadow-sm'
+                    : 'border-gray-200 bg-white text-gray-500 hover:border-violet-300 hover:text-violet-600 hover:bg-violet-50/50'
+                }`}
+              >
+                <span className="text-base">{size.icon}</span>
+                <span className="font-medium">{size.label}</span>
+                <span className="text-[10px] opacity-70">{size.dimensions}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Image Count Selector
+    // ========================================
+    function ImageCountSelector({ value, onChange }) {
+      return (
+        <div className="space-y-2">
+          <label className="text-sm font-semibold text-gray-700">생성 수량</label>
+          <div className="flex gap-2">
+            {IMAGE_COUNTS.map((count) => (
+              <button
+                key={count}
+                onClick={() => onChange(count)}
+                className={`flex-1 py-2 rounded-xl border text-sm font-medium transition-all duration-200 ${
+                  value === count
+                    ? 'border-violet-400 bg-violet-50 text-violet-700 shadow-sm'
+                    : 'border-gray-200 bg-white text-gray-500 hover:border-violet-300 hover:text-violet-600'
+                }`}
+              >
+                {count}장
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Style Preset Selector
+    // ========================================
+    function StylePresetSelector({ selectedStyle, onSelect }) {
+      return (
+        <div className="space-y-2">
+          <label className="text-sm font-semibold text-gray-700">스타일 프리셋</label>
+          <div className="grid grid-cols-2 gap-2">
+            {STYLE_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                onClick={() => onSelect(selectedStyle === preset.id ? null : preset.id)}
+                title={preset.description}
+                className={`flex flex-col items-start gap-1 p-2.5 rounded-xl border text-xs transition-all duration-200 ${
+                  selectedStyle === preset.id
+                    ? 'border-fuchsia-400 bg-fuchsia-50 text-fuchsia-700 shadow-sm ring-1 ring-fuchsia-300'
+                    : 'border-gray-200 bg-white text-gray-600 hover:border-fuchsia-300 hover:bg-fuchsia-50/50 hover:text-fuchsia-700'
+                }`}
+              >
+                <span className="text-base">{preset.emoji}</span>
+                <span className="font-semibold">{preset.label}</span>
+                <span className="text-[10px] opacity-70 text-left leading-tight">{preset.description}</span>
+              </button>
+            ))}
+          </div>
+          {selectedStyle && (
+            <p className="text-xs text-fuchsia-600 bg-fuchsia-50 border border-fuchsia-200 rounded-lg px-3 py-2 leading-relaxed">
+              ✨ 프롬프트에 <b>{STYLE_PRESETS.find(p => p.id === selectedStyle)?.label}</b> 스타일이 자동으로 추가됩니다
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    // ========================================
+    // Prompt History Component
+    // ========================================
+    function PromptHistory({ history, onSelect, onClear }) {
+      const [isOpen, setIsOpen] = useState(true);
+      if (history.length === 0) return null;
+
+      return (
+        <div className="space-y-2">
+          <button
+            onClick={() => setIsOpen(!isOpen)}
+            className="flex items-center justify-between w-full text-sm font-semibold text-gray-700 hover:text-violet-700 transition-colors"
+          >
+            <span className="flex items-center gap-2">
+              <Icons.Clock />
+              프롬프트 기록 ({history.length})
+            </span>
+            {isOpen ? <Icons.ChevronUp /> : <Icons.ChevronDown />}
+          </button>
+          {isOpen && (
+            <div className="space-y-1.5 max-h-60 overflow-y-auto">
+              {history.map((item, index) => (
+                <button
+                  key={index}
+                  onClick={() => onSelect(item)}
+                  className="w-full text-left px-3 py-2 rounded-xl bg-white border border-gray-200 text-xs text-gray-600 hover:text-violet-700 hover:border-violet-300 hover:bg-violet-50/50 transition-all duration-200 line-clamp-2"
+                  title={item}
+                >
+                  {item}
+                </button>
+              ))}
+              <button
+                onClick={onClear}
+                className="flex items-center gap-1 text-xs text-gray-400 hover:text-red-500 transition-colors mt-1 px-1"
+              >
+                <Icons.Trash />
+                기록 삭제
+              </button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ========================================
+    // Example Prompts Component
+    // ========================================
+    function ExamplePrompts({ onSelect }) {
+      return (
+        <div className="space-y-3">
+          <p className="text-sm font-semibold text-gray-600">💡 예시 프롬프트</p>
+          <div className="flex flex-wrap gap-2">
+            {EXAMPLE_PROMPTS.map((prompt, index) => (
+              <button
+                key={index}
+                onClick={() => onSelect(prompt)}
+                className="px-3 py-2 rounded-xl bg-white border border-violet-200 text-xs text-gray-600 hover:text-violet-700 hover:border-violet-400 hover:bg-violet-50 transition-all duration-200 max-w-xs text-left shadow-sm"
+                title={prompt}
+              >
+                {prompt.length > 45 ? prompt.substring(0, 45) + '...' : prompt}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Generated Image Card
+    // ========================================
+    function ImageCard({ image, prompt, index, animationDelay }) {
+      const [copied, setCopied] = useState(false);
+      const [loaded, setLoaded] = useState(false);
+
+      const handleCopyPrompt = async () => {
+        const success = await copyToClipboard(prompt);
+        if (success) {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        }
+      };
+
+      const handleDownload = () => {
+        const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, '');
+        downloadImage(image.url, `midjourney_${timestamp}_${index + 1}.png`);
+      };
+
+      return (
+        <div
+          className="animate-fade-in-up group relative rounded-2xl overflow-hidden bg-white border border-violet-100 hover:border-violet-300 shadow-sm hover:shadow-md transition-all duration-300"
+          style={{ animationDelay: `${animationDelay}ms` }}
+        >
+          {!loaded && <div className="aspect-square shimmer-bg" />}
+          <img
+            src={image.url}
+            alt={`Generated: ${prompt}`}
+            className={`w-full object-cover transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0 absolute inset-0'}`}
+            onLoad={() => setLoaded(true)}
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+          <div className="absolute bottom-0 left-0 right-0 p-3 translate-y-full group-hover:translate-y-0 transition-transform duration-300">
+            <p className="text-xs text-gray-200 line-clamp-2 mb-2">{prompt}</p>
+            <div className="flex gap-2">
+              <IconButton icon={<Icons.Download />} onClick={handleDownload} title="다운로드" size="sm" />
+              <IconButton
+                icon={copied ? <Icons.Check /> : <Icons.Copy />}
+                onClick={handleCopyPrompt}
+                title="프롬프트 복사"
+                size="sm"
+                className={copied ? 'text-emerald-600' : ''}
+              />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Image Gallery Component
+    // ========================================
+    function ImageGallery({ generations }) {
+      if (generations.length === 0) {
+        return (
+          <div className="flex flex-col items-center justify-center py-24 text-gray-400">
+            <div className="text-violet-300">
+              <Icons.Image />
+            </div>
+            <p className="mt-4 text-lg font-medium text-gray-500">아직 생성된 이미지가 없어요</p>
+            <p className="text-sm mt-1 text-gray-400">프롬프트를 입력하고 생성 버튼을 눌러보세요 ✨</p>
+          </div>
+        );
+      }
+
+      return (
+        <div className="space-y-8">
+          {generations.map((gen, genIndex) => (
+            <div key={genIndex} className="space-y-3">
+              <div className="flex items-center gap-3 flex-wrap">
+                <Badge variant="purple">{gen.images.length}장 생성됨</Badge>
+                <Badge variant="green">{gen.duration}초 소요</Badge>
+                <span className="text-xs text-gray-400">
+                  {IMAGE_SIZES.find(s => s.value === gen.imageSize)?.label} | {new Date(gen.timestamp).toLocaleTimeString('ko-KR')}
+                </span>
+                {gen.style && (
+                  <Badge className="bg-fuchsia-100 text-fuchsia-700 border border-fuchsia-200">
+                    {STYLE_PRESETS.find(p => p.id === gen.style)?.emoji} {STYLE_PRESETS.find(p => p.id === gen.style)?.label}
+                  </Badge>
+                )}
+              </div>
+              <div className={`grid gap-4 ${
+                gen.images.length === 1 ? 'grid-cols-1 max-w-lg' :
+                gen.images.length === 2 ? 'grid-cols-1 sm:grid-cols-2' :
+                'grid-cols-1 sm:grid-cols-2'
+              }`}>
+                {gen.images.map((image, imgIndex) => (
+                  <ImageCard
+                    key={imgIndex}
+                    image={image}
+                    prompt={gen.prompt}
+                    index={imgIndex}
+                    animationDelay={imgIndex * 100}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // ========================================
+    // Loading Overlay
+    // ========================================
+    function LoadingOverlay({ numImages }) {
+      return (
+        <div className="animate-fade-in-up">
+          <Card className="p-8 animate-pulse-glow">
+            <div className="flex flex-col items-center gap-4">
+              <Spinner size="lg" className="text-violet-500" />
+              <div className="text-center">
+                <p className="text-lg font-semibold text-violet-700">이미지 생성 중...</p>
+                <p className="text-sm text-gray-500 mt-1">{numImages}장의 이미지를 생성하고 있습니다</p>
+              </div>
+              <div className="flex gap-3 mt-2">
+                {Array.from({ length: numImages }).map((_, i) => (
+                  <div key={i} className="w-16 h-16 rounded-xl shimmer-bg" />
+                ))}
+              </div>
+            </div>
+          </Card>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Sidebar Component
+    // ========================================
+    function Sidebar({ imageSize, setImageSize, numImages, setNumImages, selectedStyle, setSelectedStyle, history, onSelectHistory, onClearHistory }) {
+      return (
+        <div className="space-y-6 p-5">
+          {/* Logo */}
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center shadow-md shadow-violet-300/50">
+              <Icons.Sparkles />
+            </div>
+            <div>
+              <h1 className="text-lg font-bold text-gray-800">My Midjourney</h1>
+              <p className="text-xs text-gray-500">AI 이미지 생성기</p>
+            </div>
+          </div>
+
+          <hr className="border-violet-100" />
+
+          <ImageSizeSelector value={imageSize} onChange={setImageSize} />
+          <ImageCountSelector value={numImages} onChange={setNumImages} />
+
+          <hr className="border-violet-100" />
+
+          <StylePresetSelector selectedStyle={selectedStyle} onSelect={setSelectedStyle} />
+
+          <hr className="border-violet-100" />
+
+          <PromptHistory history={history} onSelect={onSelectHistory} onClear={onClearHistory} />
+        </div>
+      );
+    }
+
+    // ========================================
+    // Mobile Sidebar Drawer
+    // ========================================
+    function MobileSidebar({ isOpen, onClose, children }) {
+      if (!isOpen) return null;
+      return (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+          <div className="absolute left-0 top-0 bottom-0 w-80 bg-white/95 backdrop-blur-md border-r border-violet-100 overflow-y-auto shadow-xl">
+            <div className="flex justify-end p-3">
+              <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
+                <Icons.X />
+              </button>
+            </div>
+            {children}
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Prompt Input Area
+    // ========================================
+    function PromptInput({ prompt, setPrompt, negativePrompt, setNegativePrompt, onGenerate, isLoading }) {
+      const [showNegative, setShowNegative] = useState(false);
+      const textareaRef = useRef(null);
+
+      const handleKeyDown = (e) => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          onGenerate();
+        }
+      };
+
+      return (
+        <Card className="p-4 space-y-3">
+          <div className="relative">
+            <textarea
+              ref={textareaRef}
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="상상하는 이미지를 설명해 주세요... (Ctrl+Enter로 생성)"
+              rows={3}
+              className="w-full bg-violet-50/50 border border-violet-200 rounded-xl px-4 py-3 text-gray-700 placeholder-gray-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-200 transition-all resize-none text-sm leading-relaxed"
+            />
+          </div>
+
+          <button
+            onClick={() => setShowNegative(!showNegative)}
+            className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-violet-600 transition-colors"
+          >
+            {showNegative ? <Icons.ChevronUp /> : <Icons.ChevronDown />}
+            네거티브 프롬프트 (선택)
+          </button>
+
+          {showNegative && (
+            <textarea
+              value={negativePrompt}
+              onChange={(e) => setNegativePrompt(e.target.value)}
+              placeholder="제외할 요소를 입력하세요... (예: blurry, low quality)"
+              rows={2}
+              className="w-full bg-violet-50/50 border border-violet-200 rounded-xl px-4 py-3 text-gray-700 placeholder-gray-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-200 transition-all resize-none text-xs"
+            />
+          )}
+
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-gray-400 hidden sm:block">Ctrl+Enter로 빠르게 생성</p>
+            <Button onClick={onGenerate} disabled={isLoading || !prompt.trim()} size="lg" className="min-w-[140px]">
+              {isLoading ? (
+                <><Spinner size="sm" />생성 중...</>
+              ) : (
+                <><Icons.Sparkles />이미지 생성</>
+              )}
+            </Button>
+          </div>
+        </Card>
+      );
+    }
+
+    // ========================================
+    // Error Toast Component
+    // ========================================
+    function ErrorToast({ message, onClose }) {
+      useEffect(() => {
+        const timer = setTimeout(onClose, 6000);
+        return () => clearTimeout(timer);
+      }, [onClose]);
+
+      if (!message) return null;
+
+      return (
+        <div className="fixed top-4 right-4 z-50 animate-fade-in-up max-w-md">
+          <div className="bg-red-50 backdrop-blur-sm border border-red-200 rounded-2xl p-4 shadow-xl flex items-start gap-3">
+            <span className="text-red-500 text-lg mt-0.5 font-bold">!</span>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-red-700">오류 발생</p>
+              <p className="text-xs text-red-600 mt-1">{message}</p>
+            </div>
+            <button onClick={onClose} className="text-red-400 hover:text-red-600 transition-colors">
+              <Icons.X />
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // App Component
+    // ========================================
+    function App() {
+      const [prompt, setPrompt] = useState('');
+      const [negativePrompt, setNegativePrompt] = useState('');
+      const [imageSize, setImageSize] = useState('square_hd');
+      const [numImages, setNumImages] = useState(1);
+      const [selectedStyle, setSelectedStyle] = useState(null);
+      const [isLoading, setIsLoading] = useState(false);
+      const [generations, setGenerations] = useState([]);
+      const [history, setHistory] = useState(() => loadFromStorage(STORAGE_KEY_HISTORY, []));
+      const [error, setError] = useState(null);
+      const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+
+      const addToHistory = useCallback((promptText) => {
+        setHistory((prev) => {
+          const filtered = prev.filter((p) => p !== promptText);
+          const updated = [promptText, ...filtered].slice(0, MAX_HISTORY);
+          saveToStorage(STORAGE_KEY_HISTORY, updated);
+          return updated;
+        });
+      }, []);
+
+      const clearHistory = useCallback(() => {
+        setHistory([]);
+        saveToStorage(STORAGE_KEY_HISTORY, []);
+      }, []);
+
+      const handleGenerate = useCallback(async () => {
+        if (!prompt.trim()) {
+          setError('프롬프트를 입력해 주세요.');
+          return;
+        }
+
+        setIsLoading(true);
+        setError(null);
+        const startTime = Date.now();
+
+        // 스타일 프리셋이 선택된 경우 프롬프트에 suffix 추가
+        const stylePreset = STYLE_PRESETS.find(p => p.id === selectedStyle);
+        const fullPrompt = stylePreset
+          ? `${prompt.trim()}, ${stylePreset.suffix}`
+          : prompt.trim();
+
+        try {
+          const body = {
+            prompt: fullPrompt,
+            image_size: imageSize,
+            num_images: numImages,
+            num_inference_steps: 4,
+          };
+
+          // 백엔드 프록시 엔드포인트를 통해 호출 (서버에서 FAL_API_KEY 환경변수 사용)
+          const response = await fetch(`${API_BASE_URL}/api/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+
+          if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            if (response.status === 401 || response.status === 403) {
+              throw new Error('서버에 API Key가 설정되지 않았습니다. .env 파일에 FAL_API_KEY를 확인해 주세요.');
+            }
+            if (response.status === 422) {
+              throw new Error('요청 형식이 올바르지 않습니다. 프롬프트를 확인해 주세요.');
+            }
+            if (response.status === 429) {
+              throw new Error('요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.');
+            }
+            throw new Error(errData.detail || errData.message || `서버 오류가 발생했습니다. (${response.status})`);
+          }
+
+          const data = await response.json();
+          const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+          if (!data.images || data.images.length === 0) {
+            throw new Error('이미지가 생성되지 않았습니다. 다시 시도해 주세요.');
+          }
+
+          setGenerations((prev) => [{
+            prompt: prompt.trim(),
+            images: data.images,
+            imageSize,
+            numImages,
+            style: selectedStyle,
+            duration,
+            timestamp: Date.now(),
+          }, ...prev]);
+
+          addToHistory(prompt.trim());
+        } catch (err) {
+          setError(err.message || '알 수 없는 오류가 발생했습니다.');
+        } finally {
+          setIsLoading(false);
+        }
+      }, [prompt, imageSize, numImages, selectedStyle, addToHistory]);
+
+      const sidebarContent = (
+        <Sidebar
+          imageSize={imageSize}
+          setImageSize={setImageSize}
+          numImages={numImages}
+          setNumImages={setNumImages}
+          selectedStyle={selectedStyle}
+          setSelectedStyle={setSelectedStyle}
+          history={history}
+          onSelectHistory={setPrompt}
+          onClearHistory={clearHistory}
+        />
+      );
+
+      return (
+        <div className="min-h-screen flex">
+          {/* Desktop Sidebar */}
+          <aside className="hidden lg:block w-80 flex-shrink-0 bg-white/70 backdrop-blur-md border-r border-violet-100 overflow-y-auto h-screen sticky top-0 shadow-sm">
+            {sidebarContent}
+          </aside>
+
+          {/* Mobile Sidebar */}
+          <MobileSidebar isOpen={mobileSidebarOpen} onClose={() => setMobileSidebarOpen(false)}>
+            {sidebarContent}
+          </MobileSidebar>
+
+          {/* Main Content */}
+          <main className="flex-1 min-h-screen">
+            {/* Mobile Header */}
+            <div className="lg:hidden sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-violet-100 px-4 py-3 flex items-center gap-3 shadow-sm">
+              <button
+                onClick={() => setMobileSidebarOpen(true)}
+                className="text-gray-500 hover:text-violet-700 transition-colors"
+                aria-label="메뉴 열기"
+              >
+                <Icons.Menu />
+              </button>
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center shadow-sm">
+                  <Icons.Sparkles />
+                </div>
+                <span className="font-bold text-sm text-gray-800">My Midjourney</span>
+              </div>
+            </div>
+
+            <div className="max-w-4xl mx-auto p-4 md:p-6 lg:p-8 space-y-6">
+              {/* Prompt Input */}
+              <PromptInput
+                prompt={prompt}
+                setPrompt={setPrompt}
+                negativePrompt={negativePrompt}
+                setNegativePrompt={setNegativePrompt}
+                onGenerate={handleGenerate}
+                isLoading={isLoading}
+              />
+
+              {/* Example Prompts */}
+              {generations.length === 0 && !isLoading && (
+                <ExamplePrompts onSelect={setPrompt} />
+              )}
+
+              {/* Loading State */}
+              {isLoading && <LoadingOverlay numImages={numImages} />}
+
+              {/* Gallery */}
+              <ImageGallery generations={generations} />
+            </div>
+          </main>
+
+          {/* Error Toast */}
+          <ErrorToast message={error} onClose={() => setError(null)} />
+        </div>
+      );
+    }
+
+    // ========================================
+    // Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
