@@ -1,0 +1,15 @@
+{
+  "name": "q4-balance-game",
+  "version": "1.0.0",
+  "description": "실시간 밸런스 게임 앱 (Supabase + Express)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "openai": "^6.34.0",
+    "pg": "^8.13.1"
+  }
+}

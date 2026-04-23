@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>익명 연봉 비교</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { font-family: 'Noto Sans KR', -apple-system, BlinkMacSystemFont, sans-serif; }
+    .hide-scrollbar::-webkit-scrollbar { display: none; }
+    .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    @keyframes slideDown {
+      from { opacity: 0; max-height: 0; }
+      to { opacity: 1; max-height: 600px; }
+    }
+    .slide-down { animation: slideDown 0.3s ease-out forwards; overflow: hidden; }
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .fade-in-up { animation: fadeInUp 0.4s ease-out forwards; }
+  </style>
+</head>
+<body class="bg-slate-100 min-h-screen">
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useMemo, useCallback, useRef, useEffect } = React;
+
+    // ========================================
+    // API
+    // ========================================
+    const API_BASE_URL = '/api';
+
+    async function fetchSalaries(sort = 'latest') {
+      const res = await fetch(`${API_BASE_URL}/salaries?sort=${sort}`);
+      return res.json();
+    }
+    async function fetchStats() {
+      const res = await fetch(`${API_BASE_URL}/salaries/stats`);
+      return res.json();
+    }
+    async function createSalary(data) {
+      const res = await fetch(`${API_BASE_URL}/salaries`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      return res.json();
+    }
+    async function deleteSalary(id) {
+      const res = await fetch(`${API_BASE_URL}/salaries/${id}`, { method: 'DELETE' });
+      return res.json();
+    }
+
+    // ========================================
+    // 카테고리 & 헬퍼
+    // ========================================
+    const CATEGORIES = [
+      { key: 'all', label: '전체', emoji: '' },
+      { key: '개발', label: '개발', emoji: '💻' },
+      { key: '디자인', label: '디자인', emoji: '🎨' },
+      { key: '마케팅', label: '마케팅', emoji: '📣' },
+      { key: '영업', label: '영업', emoji: '🤝' },
+      { key: '기타', label: '기타', emoji: '✨' },
+    ];
+
+    const categoryMeta = {
+      '개발':   { label: '개발',   emoji: '💻', color: 'bg-emerald-100 text-emerald-700' },
+      '디자인': { label: '디자인', emoji: '🎨', color: 'bg-pink-100 text-pink-700' },
+      '마케팅': { label: '마케팅', emoji: '📣', color: 'bg-orange-100 text-orange-700' },
+      '영업':   { label: '영업',   emoji: '🤝', color: 'bg-blue-100 text-blue-700' },
+      '기타':   { label: '기타',   emoji: '✨', color: 'bg-gray-100 text-gray-600' },
+    };
+
+    function timeAgo(dateStr) {
+      const diff = Date.now() - new Date(dateStr);
+      const mins = Math.floor(diff / 60000);
+      if (mins < 1) return '방금 전';
+      if (mins < 60) return `${mins}분 전`;
+      const hours = Math.floor(mins / 60);
+      if (hours < 24) return `${hours}시간 전`;
+      return `${Math.floor(hours / 24)}일 전`;
+    }
+
+    function formatMoney(n) {
+      return Number(n).toLocaleString();
+    }
+
+    // ========================================
+    // Design System Components
+    // ========================================
+    function Badge({ emoji, label, colorClass, className = '' }) {
+      return (
+        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium ${colorClass} ${className}`}>
+          {emoji && <span>{emoji}</span>}
+          {label}
+        </span>
+      );
+    }
+
+    function Button({ children, variant = 'primary', size = 'md', disabled = false, onClick, className = '', type = 'button' }) {
+      const base = 'inline-flex items-center justify-center font-medium transition-all duration-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-300';
+      const variants = {
+        primary: 'bg-emerald-500 text-white hover:bg-emerald-600 active:bg-emerald-700 disabled:bg-emerald-300',
+        secondary: 'bg-white text-emerald-600 border-2 border-emerald-400 hover:bg-emerald-50 active:bg-emerald-100 disabled:border-emerald-200 disabled:text-emerald-300',
+        ghost: 'bg-transparent text-gray-500 hover:bg-gray-100 active:bg-gray-200 border border-gray-200',
+        danger: 'bg-red-500 text-white hover:bg-red-600 active:bg-red-700 disabled:bg-red-300',
+      };
+      const sizes = {
+        sm: 'px-3 py-1.5 text-sm',
+        md: 'px-4 py-2.5 text-sm',
+        lg: 'px-6 py-3 text-base',
+      };
+      return (
+        <button
+          type={type}
+          disabled={disabled}
+          onClick={onClick}
+          className={`${base} ${variants[variant]} ${sizes[size]} ${className}`}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    function Input({ label, value, onChange, placeholder, className = '', maxLength, type = 'text', min, max }) {
+      return (
+        <div className={className}>
+          {label && <label className="block text-sm font-medium text-gray-600 mb-1.5">{label}</label>}
+          <input
+            type={type}
+            value={value}
+            onChange={onChange}
+            placeholder={placeholder}
+            maxLength={maxLength}
+            min={min}
+            max={max}
+            className="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 outline-none transition-all text-sm"
+          />
+        </div>
+      );
+    }
+
+    function Card({ children, className = '' }) {
+      return (
+        <div className={`bg-white rounded-2xl shadow-sm border border-gray-100 ${className}`}>
+          {children}
+        </div>
+      );
+    }
+
+    // ========================================
+    // Common / Layout Components
+    // ========================================
+    function Header() {
+      return (
+        <header className="bg-emerald-600 text-white px-4 py-4 shadow-md sticky top-0 z-50">
+          <div className="max-w-lg mx-auto flex items-center gap-2">
+            <span className="text-2xl">💚</span>
+            <h1 className="text-lg font-bold tracking-tight">익명 연봉 비교</h1>
+          </div>
+        </header>
+      );
+    }
+
+    function StatsBar({ stats, loading }) {
+      const items = [
+        { emoji: '💰', label: '평균 연봉', value: stats ? `${formatMoney(stats.avgSalary)} 만원` : '-' },
+        { emoji: '💸', label: '평균 지출', value: stats ? `${formatMoney(stats.avgExpense)} 만원` : '-' },
+        { emoji: '👥', label: '참여자', value: stats ? `${stats.count} 명` : '-' },
+      ];
+
+      return (
+        <div className="max-w-lg mx-auto px-4 mt-4">
+          <div className="grid grid-cols-3 gap-2">
+            {items.map((item, i) => (
+              <Card key={i} className="p-3 text-center">
+                {loading ? (
+                  <div className="flex justify-center py-2">
+                    <div className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-lg mb-0.5">{item.emoji}</p>
+                    <p className="text-xs text-gray-400 mb-1">{item.label}</p>
+                    <p className="text-sm font-bold text-gray-800">{item.value}</p>
+                  </>
+                )}
+              </Card>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function CategoryTabs({ active, onChange }) {
+      const scrollRef = useRef(null);
+      return (
+        <div className="bg-white border-b border-gray-100 sticky top-[56px] z-40">
+          <div className="max-w-lg mx-auto">
+            <div ref={scrollRef} className="flex gap-1 px-3 py-2 overflow-x-auto hide-scrollbar">
+              {CATEGORIES.map(cat => {
+                const isActive = active === cat.key;
+                return (
+                  <button
+                    key={cat.key}
+                    onClick={() => onChange(cat.key)}
+                    className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 ${
+                      isActive
+                        ? 'bg-emerald-500 text-white shadow-sm'
+                        : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                    }`}
+                  >
+                    {cat.emoji && <span className="mr-1">{cat.emoji}</span>}
+                    {cat.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function SortTabs({ active, onChange }) {
+      const tabs = [
+        { key: 'latest', label: '최신순' },
+        { key: 'salary', label: '연봉순' },
+      ];
+      return (
+        <div className="max-w-lg mx-auto px-4 mt-4">
+          <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+            {tabs.map(tab => (
+              <button
+                key={tab.key}
+                onClick={() => onChange(tab.key)}
+                className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${
+                  active === tab.key
+                    ? 'bg-white text-emerald-600 shadow-sm'
+                    : 'text-gray-400 hover:text-gray-600'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 연봉 등록 폼
+    // ========================================
+    function CreateSalaryForm({ onSubmit }) {
+      const [isOpen, setIsOpen] = useState(false);
+      const [jobCategory, setJobCategory] = useState('개발');
+      const [salary, setSalary] = useState('');
+      const [monthlyExpense, setMonthlyExpense] = useState('');
+      const [comment, setComment] = useState('');
+
+      const catOptions = CATEGORIES.filter(c => c.key !== 'all');
+
+      const resetForm = () => {
+        setJobCategory('개발');
+        setSalary('');
+        setMonthlyExpense('');
+        setComment('');
+        setIsOpen(false);
+      };
+
+      const isValid = salary !== '' && Number(salary) >= 1 && Number(salary) <= 99999;
+
+      const handleSubmit = useCallback((e) => {
+        e.preventDefault();
+        if (!isValid) return;
+        onSubmit({
+          job_category: jobCategory,
+          salary: Number(salary),
+          monthly_expense: monthlyExpense ? Number(monthlyExpense) : 0,
+          comment: comment.trim() || null,
+        });
+        resetForm();
+      }, [jobCategory, salary, monthlyExpense, comment, isValid, onSubmit]);
+
+      return (
+        <div className="max-w-lg mx-auto px-4 mt-4">
+          <Card>
+            {/* 헤더 버튼 */}
+            <div className="flex items-center gap-2 px-4 py-3">
+              <button
+                onClick={() => setIsOpen(!isOpen)}
+                className="flex-1 flex items-center gap-2 text-sm font-semibold text-gray-700 hover:text-emerald-600 transition-colors"
+              >
+                <span className="text-emerald-500 text-lg">+</span>
+                내 연봉 등록하기
+                <svg className={`w-4 h-4 text-gray-400 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`}
+                  fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            </div>
+
+            {/* 폼 영역 */}
+            {isOpen && (
+              <div className="px-5 pb-5 pt-1 slide-down">
+                <form onSubmit={handleSubmit}>
+                  <div className="space-y-3">
+                    {/* 직군 선택 */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-600 mb-1.5">직군</label>
+                      <div className="flex gap-2 flex-wrap">
+                        {catOptions.map(cat => {
+                          const isActive = jobCategory === cat.key;
+                          return (
+                            <button
+                              key={cat.key}
+                              type="button"
+                              onClick={() => setJobCategory(cat.key)}
+                              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 border-2 ${
+                                isActive
+                                  ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
+                                  : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'
+                              }`}
+                            >
+                              {cat.emoji} {cat.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* 연봉 */}
+                    <Input
+                      label="연봉 (만원) *"
+                      type="number"
+                      value={salary}
+                      onChange={e => setSalary(e.target.value)}
+                      placeholder="예: 5000"
+                      min={1}
+                      max={99999}
+                    />
+
+                    {/* 월 지출 */}
+                    <Input
+                      label="월 지출 (만원)"
+                      type="number"
+                      value={monthlyExpense}
+                      onChange={e => setMonthlyExpense(e.target.value)}
+                      placeholder="예: 150"
+                      min={0}
+                      max={99999}
+                    />
+
+                    {/* 한마디 */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-600 mb-1.5">한마디 (선택)</label>
+                      <input
+                        type="text"
+                        value={comment}
+                        onChange={e => setComment(e.target.value)}
+                        placeholder="한마디를 남겨보세요..."
+                        maxLength={100}
+                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 outline-none transition-all text-sm"
+                      />
+                      <div className="text-right mt-1">
+                        <span className="text-xs text-gray-400">{comment.length}/100</span>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <Button variant="ghost" size="md" className="flex-1" onClick={resetForm}>
+                        취소
+                      </Button>
+                      <Button type="submit" variant="primary" size="md" className="flex-1" disabled={!isValid}>
+                        등록하기
+                      </Button>
+                    </div>
+                  </div>
+                </form>
+              </div>
+            )}
+          </Card>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 연봉 카드
+    // ========================================
+    function SalaryCard({ item, avgSalary, onDelete }) {
+      const { id, job_category, salary, monthly_expense, comment, created_at } = item;
+      const meta = categoryMeta[job_category] || { label: job_category, emoji: '❓', color: 'bg-gray-100 text-gray-600' };
+      const [deleting, setDeleting] = useState(false);
+
+      const diff = avgSalary ? salary - avgSalary : 0;
+      const diffText = diff >= 0
+        ? `평균보다 +${formatMoney(diff)}만원 높아요`
+        : `평균보다 -${formatMoney(Math.abs(diff))}만원 낮아요`;
+      const diffColor = diff >= 0 ? 'text-emerald-600' : 'text-red-500';
+
+      const handleDelete = async () => {
+        if (!confirm('이 항목을 삭제할까요?')) return;
+        setDeleting(true);
+        await onDelete(id);
+      };
+
+      return (
+        <Card className="fade-in-up">
+          <div className="p-5">
+            {/* 상단: 뱃지, 시간, 삭제 */}
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Badge emoji={meta.emoji} label={meta.label} colorClass={meta.color} />
+                <span className="text-xs text-gray-400">{timeAgo(created_at)}</span>
+              </div>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="w-6 h-6 flex items-center justify-center rounded-full text-gray-300 hover:bg-red-50 hover:text-red-400 transition-colors disabled:opacity-40"
+                title="삭제"
+                aria-label="삭제"
+              >
+                {deleting ? (
+                  <span className="w-3 h-3 border-2 border-red-300 border-t-transparent rounded-full animate-spin inline-block" />
+                ) : (
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                )}
+              </button>
+            </div>
+
+            {/* 연봉 */}
+            <p className="text-2xl font-bold text-gray-800 mb-1">
+              {formatMoney(salary)} <span className="text-base font-medium text-gray-500">만원</span>
+            </p>
+
+            {/* 월 지출 */}
+            {monthly_expense > 0 && (
+              <p className="text-sm text-gray-500 mb-1">
+                월 지출 <span className="font-semibold text-gray-700">{formatMoney(monthly_expense)}</span> 만원
+              </p>
+            )}
+
+            {/* 평균 대비 */}
+            {avgSalary > 0 && (
+              <p className={`text-xs font-medium mt-2 ${diffColor}`}>
+                {diffText}
+              </p>
+            )}
+
+            {/* 한마디 */}
+            {comment && (
+              <div className="mt-3 px-3 py-2 bg-gray-50 rounded-xl border border-gray-100">
+                <p className="text-sm text-gray-600 italic">"{comment}"</p>
+              </div>
+            )}
+          </div>
+        </Card>
+      );
+    }
+
+    // ========================================
+    // 연봉 TOP 3 섹션
+    // ========================================
+    function TopSalarySection({ salaries }) {
+      const ranked = useMemo(() => {
+        return [...salaries]
+          .sort((a, b) => b.salary - a.salary)
+          .slice(0, 3);
+      }, [salaries]);
+
+      if (ranked.length === 0) return null;
+
+      const medals = ['🥇', '🥈', '🥉'];
+
+      return (
+        <div className="max-w-lg mx-auto px-4 mt-6 mb-2">
+          <h2 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1.5">
+            <span>🔥</span> 연봉 TOP 3
+          </h2>
+          <Card>
+            <div className="divide-y divide-gray-50">
+              {ranked.map((s, i) => {
+                const meta = categoryMeta[s.job_category] || { label: s.job_category, emoji: '❓', color: '' };
+                return (
+                  <div key={s.id} className="flex items-center gap-3 px-4 py-3">
+                    <span className="text-lg flex-shrink-0 w-7 text-center">{medals[i]}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-gray-800">
+                        {formatMoney(s.salary)} 만원
+                      </p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {meta.emoji} {meta.label}
+                      </p>
+                    </div>
+                    {s.comment && (
+                      <p className="text-xs text-gray-400 truncate max-w-[120px] italic">"{s.comment}"</p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </div>
+      );
+    }
+
+    // ========================================
+    // App Component
+    // ========================================
+    function App() {
+      const [salaries, setSalaries] = useState([]);
+      const [stats, setStats] = useState(null);
+      const [activeCategory, setActiveCategory] = useState('all');
+      const [sortBy, setSortBy] = useState('latest');
+      const [loading, setLoading] = useState(true);
+
+      const loadData = useCallback(async () => {
+        setLoading(true);
+        try {
+          const [salRes, statRes] = await Promise.all([
+            fetchSalaries(sortBy),
+            fetchStats(),
+          ]);
+          if (salRes.success) setSalaries(salRes.data);
+          if (statRes.success) setStats(statRes.data);
+        } finally {
+          setLoading(false);
+        }
+      }, [sortBy]);
+
+      useEffect(() => {
+        loadData();
+      }, [loadData]);
+
+      const handleCreate = useCallback(async (data) => {
+        const res = await createSalary(data);
+        if (res.success) {
+          setSalaries(prev => [res.data, ...prev]);
+          // 통계 재로드
+          const statRes = await fetchStats();
+          if (statRes.success) setStats(statRes.data);
+        }
+      }, []);
+
+      const handleDelete = useCallback(async (id) => {
+        const res = await deleteSalary(id);
+        if (res.success) {
+          setSalaries(prev => prev.filter(s => s.id !== id));
+          // 통계 재로드
+          const statRes = await fetchStats();
+          if (statRes.success) setStats(statRes.data);
+        }
+      }, []);
+
+      const filteredSalaries = useMemo(() => {
+        let list = salaries;
+        if (activeCategory !== 'all') {
+          list = list.filter(s => s.job_category === activeCategory);
+        }
+        if (sortBy === 'salary') {
+          list = [...list].sort((a, b) => b.salary - a.salary);
+        }
+        return list;
+      }, [salaries, activeCategory, sortBy]);
+
+      const avgSalary = stats ? stats.avgSalary : 0;
+
+      return (
+        <div className="min-h-screen bg-slate-100 pb-8">
+          <Header />
+          <CategoryTabs active={activeCategory} onChange={setActiveCategory} />
+          <StatsBar stats={stats} loading={loading} />
+          <CreateSalaryForm onSubmit={handleCreate} />
+          <SortTabs active={sortBy} onChange={setSortBy} />
+
+          <div className="max-w-lg mx-auto px-4 mt-4 space-y-4">
+            {loading ? (
+              <div className="flex justify-center py-12">
+                <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : filteredSalaries.length === 0 ? (
+              <Card className="p-8 text-center">
+                <p className="text-3xl mb-2">💚</p>
+                <p className="text-sm text-gray-400">아직 등록된 연봉이 없어요</p>
+                <p className="text-xs text-gray-300 mt-1">첫 번째로 연봉을 등록해보세요!</p>
+              </Card>
+            ) : (
+              filteredSalaries.map(s => (
+                <SalaryCard
+                  key={s.id}
+                  item={s}
+                  avgSalary={avgSalary}
+                  onDelete={handleDelete}
+                />
+              ))
+            )}
+          </div>
+
+          <TopSalarySection salaries={salaries} />
+          <div className="h-4" />
+        </div>
+      );
+    }
+
+    // ========================================
+    // Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

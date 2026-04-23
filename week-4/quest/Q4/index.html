@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>밸런스 게임</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { font-family: 'Noto Sans KR', -apple-system, BlinkMacSystemFont, sans-serif; }
+    .hide-scrollbar::-webkit-scrollbar { display: none; }
+    .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    @keyframes slideDown {
+      from { opacity: 0; max-height: 0; }
+      to { opacity: 1; max-height: 600px; }
+    }
+    .slide-down { animation: slideDown 0.3s ease-out forwards; overflow: hidden; }
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .fade-in-up { animation: fadeInUp 0.4s ease-out forwards; }
+    .percent-bar { transition: width 0.7s cubic-bezier(0.4, 0, 0.2, 1); }
+  </style>
+</head>
+<body class="bg-slate-100 min-h-screen">
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useMemo, useCallback, useRef, useEffect } = React;
+
+    // ========================================
+    // API
+    // ========================================
+    const API_BASE_URL = '/api';
+
+    async function fetchQuestions() {
+      const res = await fetch(`${API_BASE_URL}/questions`);
+      return res.json();
+    }
+    async function postVote(questionId, choice) {
+      const res = await fetch(`${API_BASE_URL}/questions/${questionId}/vote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ choice })
+      });
+      return res.json();
+    }
+    async function createQuestion(data) {
+      const res = await fetch(`${API_BASE_URL}/questions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      return res.json();
+    }
+    async function deleteQuestion(id) {
+      const res = await fetch(`${API_BASE_URL}/questions/${id}`, { method: 'DELETE' });
+      return res.json();
+    }
+
+    async function generateAIQuestion(usedQuestions = []) {
+      const res = await fetch(`${API_BASE_URL}/ai/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ usedQuestions })
+      });
+      return res.json();
+    }
+
+    const CATEGORIES = [
+      { key: 'all', label: '전체', emoji: '' },
+      { key: '돈', label: '돈', emoji: '💰' },
+      { key: '직장', label: '직장', emoji: '💼' },
+      { key: '음식', label: '음식', emoji: '🍔' },
+      { key: '라이프', label: '라이프', emoji: '🌿' },
+    ];
+
+    const categoryMeta = {
+      '돈': { label: '돈', emoji: '💰', color: 'bg-yellow-100 text-yellow-700' },
+      '직장': { label: '직장', emoji: '💼', color: 'bg-indigo-100 text-indigo-700' },
+      '음식': { label: '음식', emoji: '🍔', color: 'bg-orange-100 text-orange-700' },
+      '라이프': { label: '라이프', emoji: '🌿', color: 'bg-green-100 text-green-700' },
+    };
+
+    // ========================================
+    // 🎨 Design System Components
+    // ========================================
+    function Badge({ emoji, label, colorClass, className = '' }) {
+      return (
+        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium ${colorClass} ${className}`}>
+          {emoji && <span>{emoji}</span>}
+          {label}
+        </span>
+      );
+    }
+
+    function Button({ children, variant = 'primary', size = 'md', disabled = false, onClick, className = '', type = 'button' }) {
+      const base = 'inline-flex items-center justify-center font-medium transition-all duration-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-300';
+      const variants = {
+        primary: 'bg-blue-500 text-white hover:bg-blue-600 active:bg-blue-700 disabled:bg-blue-300',
+        secondary: 'bg-white text-blue-600 border-2 border-blue-400 hover:bg-blue-50 active:bg-blue-100 disabled:border-blue-200 disabled:text-blue-300',
+        ghost: 'bg-transparent text-gray-500 hover:bg-gray-100 active:bg-gray-200 border border-gray-200',
+        choice: 'bg-white text-gray-700 border-2 border-blue-300 hover:bg-blue-50 hover:border-blue-500 hover:text-blue-600 active:bg-blue-100',
+      };
+      const sizes = {
+        sm: 'px-3 py-1.5 text-sm',
+        md: 'px-4 py-2.5 text-sm',
+        lg: 'px-6 py-3 text-base',
+      };
+      return (
+        <button
+          type={type}
+          disabled={disabled}
+          onClick={onClick}
+          className={`${base} ${variants[variant]} ${sizes[size]} ${className}`}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    function Input({ label, value, onChange, placeholder, className = '', maxLength }) {
+      return (
+        <div className={className}>
+          {label && <label className="block text-sm font-medium text-gray-600 mb-1.5">{label}</label>}
+          <input
+            type="text"
+            value={value}
+            onChange={onChange}
+            placeholder={placeholder}
+            maxLength={maxLength}
+            className="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm"
+          />
+        </div>
+      );
+    }
+
+    function Select({ label, value, onChange, options, className = '' }) {
+      return (
+        <div className={className}>
+          {label && <label className="block text-sm font-medium text-gray-600 mb-1.5">{label}</label>}
+          <select
+            value={value}
+            onChange={onChange}
+            className="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm appearance-none"
+          >
+            {options.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </div>
+      );
+    }
+
+    function Card({ children, className = '' }) {
+      return (
+        <div className={`bg-white rounded-2xl shadow-sm border border-gray-100 ${className}`}>
+          {children}
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🧩 Common / Layout Components
+    // ========================================
+    function Header() {
+      return (
+        <header className="bg-blue-500 text-white px-4 py-4 shadow-md sticky top-0 z-50">
+          <div className="max-w-lg mx-auto flex items-center gap-2">
+            <span className="text-2xl">&#x2696;&#xFE0F;</span>
+            <h1 className="text-lg font-bold tracking-tight">밸런스 게임</h1>
+          </div>
+        </header>
+      );
+    }
+
+    function CategoryTabs({ active, onChange }) {
+      const scrollRef = useRef(null);
+      return (
+        <div className="bg-white border-b border-gray-100 sticky top-[56px] z-40">
+          <div className="max-w-lg mx-auto">
+            <div ref={scrollRef} className="flex gap-1 px-3 py-2 overflow-x-auto hide-scrollbar">
+              {CATEGORIES.map(cat => {
+                const isActive = active === cat.key;
+                return (
+                  <button
+                    key={cat.key}
+                    onClick={() => onChange(cat.key)}
+                    className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 ${
+                      isActive
+                        ? 'bg-blue-500 text-white shadow-sm'
+                        : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                    }`}
+                  >
+                    {cat.emoji && <span className="mr-1">{cat.emoji}</span>}
+                    {cat.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 📄 질문 등록 폼
+    // ========================================
+    function CreateQuestionForm({ onSubmit }) {
+      const [isOpen, setIsOpen] = useState(false);
+      const [title, setTitle] = useState('');
+      const [choiceA, setChoiceA] = useState('');
+      const [choiceB, setChoiceB] = useState('');
+      const [category, setCategory] = useState('돈');
+
+      // AI 관련 상태
+      const [aiMode, setAiMode] = useState(false);
+      const [aiLoading, setAiLoading] = useState(false);
+      const [aiError, setAiError] = useState('');
+      const [usedAiQuestions, setUsedAiQuestions] = useState([]);
+
+      const catOptions = CATEGORIES.filter(c => c.key !== 'all').map(c => ({
+        value: c.key,
+        label: `${c.emoji} ${c.label}`,
+      }));
+
+      const resetForm = () => {
+        setTitle(''); setChoiceA(''); setChoiceB(''); setCategory('돈');
+        setAiMode(false); setAiError(''); setIsOpen(false);
+        setUsedAiQuestions([]);
+      };
+
+      // AI 질문 생성
+      const handleAIGenerate = async () => {
+        setAiLoading(true);
+        setAiError('');
+        setIsOpen(true);
+        try {
+          const res = await generateAIQuestion(usedAiQuestions);
+          if (!res.success) throw new Error(res.message);
+          setTitle(res.data.title || '');
+          setChoiceA(res.data.choiceA);
+          setChoiceB(res.data.choiceB);
+          setCategory(res.data.category || '라이프');
+          setUsedAiQuestions(prev => [...prev, `${res.data.choiceA} vs ${res.data.choiceB}`]);
+          setAiMode(true);
+        } catch (e) {
+          setAiError('AI 생성 실패. 다시 시도해주세요.');
+          setAiMode(false);
+        } finally {
+          setAiLoading(false);
+        }
+      };
+
+      // 수동 등록
+      const handleSubmit = useCallback((e) => {
+        e.preventDefault();
+        if (!choiceA.trim() || !choiceB.trim()) return;
+        onSubmit({ title: title.trim() || null, choiceA: choiceA.trim(), choiceB: choiceB.trim(), category });
+        resetForm();
+      }, [title, choiceA, choiceB, category, onSubmit]);
+
+      // AI 생성 후 등록
+      const handleAISubmit = async () => {
+        await onSubmit({ title: title || null, choiceA, choiceB, category });
+        resetForm();
+      };
+
+      const meta = categoryMeta[category] || { label: category, emoji: '❓', color: 'bg-gray-100 text-gray-600' };
+
+      return (
+        <div className="max-w-lg mx-auto px-4 mt-4">
+          <Card>
+            {/* 헤더 버튼 행 */}
+            <div className="flex items-center gap-2 px-4 py-3">
+              <button
+                onClick={() => { setIsOpen(!isOpen); setAiMode(false); }}
+                className="flex-1 flex items-center gap-2 text-sm font-semibold text-gray-700 hover:text-blue-600 transition-colors"
+              >
+                <span className="text-blue-500 text-lg">+</span>
+                새 질문 만들기
+                <svg className={`w-4 h-4 text-gray-400 transition-transform duration-300 ${isOpen && !aiMode ? 'rotate-180' : ''}`}
+                  fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+
+              {/* ✨ AI 버튼 */}
+              <button
+                onClick={handleAIGenerate}
+                disabled={aiLoading}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-violet-500 to-blue-500 text-white text-xs font-semibold hover:opacity-90 active:opacity-80 transition-all disabled:opacity-60 shadow-sm"
+              >
+                {aiLoading
+                  ? <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin inline-block" />
+                  : <span>✨</span>
+                }
+                AI로 만들기
+              </button>
+            </div>
+
+            {/* 폼 영역 */}
+            {isOpen && (
+              <div className="px-5 pb-5 pt-1 slide-down">
+
+                {/* AI 로딩 중 */}
+                {aiLoading && (
+                  <div className="flex flex-col items-center py-6 gap-3">
+                    <div className="w-8 h-8 border-4 border-violet-400 border-t-transparent rounded-full animate-spin" />
+                    <p className="text-sm text-gray-500">AI가 질문을 만들고 있어요...</p>
+                  </div>
+                )}
+
+                {/* AI 미리보기 모드 */}
+                {!aiLoading && aiMode && (
+                  <div className="space-y-3">
+                    <div className="bg-gradient-to-br from-violet-50 to-blue-50 border border-violet-200 rounded-2xl p-4">
+                      <div className="flex items-center gap-1.5 mb-3">
+                        <span className="text-xs font-bold text-violet-600 bg-violet-100 px-2 py-0.5 rounded-full">✨ AI 생성</span>
+                        {title && <span className="text-xs text-gray-500 font-medium">{title}</span>}
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 bg-white rounded-xl px-3 py-3 border-2 border-blue-200">
+                          <span className="w-5 h-5 rounded-full bg-blue-500 text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">A</span>
+                          <span className="text-sm font-medium text-gray-700">{choiceA}</span>
+                        </div>
+                        <div className="flex justify-center">
+                          <span className="text-xs font-bold text-gray-300">VS</span>
+                        </div>
+                        <div className="flex items-center gap-2 bg-white rounded-xl px-3 py-3 border-2 border-gray-200">
+                          <span className="w-5 h-5 rounded-full bg-gray-400 text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">B</span>
+                          <span className="text-sm font-medium text-gray-700">{choiceB}</span>
+                        </div>
+                      </div>
+                      <div className="mt-2.5 flex justify-end">
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${meta.color}`}>
+                          {meta.emoji} {meta.label}
+                        </span>
+                      </div>
+                    </div>
+
+                    {aiError && <p className="text-xs text-red-500 text-center">{aiError}</p>}
+
+                    {/* 3개 버튼: 취소 / 리프레쉬 / 등록 */}
+                    <div className="flex gap-2 pt-1">
+                      <Button variant="ghost" size="md" className="flex-1" onClick={resetForm}>
+                        취소
+                      </Button>
+                      <Button variant="secondary" size="md" className="flex-1" onClick={handleAIGenerate} disabled={aiLoading}>
+                        🔄 리프레쉬
+                      </Button>
+                      <Button variant="primary" size="md" className="flex-1" onClick={handleAISubmit}>
+                        등록
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* 수동 입력 모드 */}
+                {!aiLoading && !aiMode && (
+                  <form onSubmit={handleSubmit}>
+                    <div className="space-y-3">
+                      <Input
+                        label="제목 (선택)"
+                        value={title}
+                        onChange={e => setTitle(e.target.value)}
+                        placeholder="예: 직장인 최고의 고민"
+                        maxLength={40}
+                      />
+                      <div>
+                        <label className="block text-sm font-medium text-blue-600 mb-1.5">A 선택지</label>
+                        <input
+                          type="text" value={choiceA} onChange={e => setChoiceA(e.target.value)}
+                          placeholder="예: 월급 500 + 주7일 출근" maxLength={50} required
+                          className="w-full px-4 py-2.5 rounded-xl border-2 border-blue-200 bg-blue-50/30 focus:bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm"
+                        />
+                      </div>
+                      <div className="flex justify-center">
+                        <span className="text-xs font-bold text-gray-400 bg-gray-100 px-3 py-1 rounded-full">VS</span>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-500 mb-1.5">B 선택지</label>
+                        <input
+                          type="text" value={choiceB} onChange={e => setChoiceB(e.target.value)}
+                          placeholder="예: 월급 300 + 주4일 출근" maxLength={50} required
+                          className="w-full px-4 py-2.5 rounded-xl border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-gray-400 focus:ring-2 focus:ring-gray-100 outline-none transition-all text-sm"
+                        />
+                      </div>
+                      <Select label="카테고리" value={category} onChange={e => setCategory(e.target.value)} options={catOptions} />
+                      <Button type="submit" variant="primary" size="lg" className="w-full mt-2" disabled={!choiceA.trim() || !choiceB.trim()}>
+                        등록하기
+                      </Button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            )}
+          </Card>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 📄 퍼센티지 바
+    // ========================================
+    function PercentBar({ percentA, percentB }) {
+      const [animate, setAnimate] = useState(false);
+      useEffect(() => {
+        const t = setTimeout(() => setAnimate(true), 50);
+        return () => clearTimeout(t);
+      }, []);
+      return (
+        <div className="mt-3">
+          <div className="flex justify-between text-xs font-semibold mb-1.5">
+            <span className="text-blue-600">{percentA}%</span>
+            <span className="text-gray-400">{percentB}%</span>
+          </div>
+          <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden flex">
+            <div
+              className="h-full bg-blue-500 rounded-l-full percent-bar"
+              style={{ width: animate ? `${percentA}%` : '0%' }}
+            />
+            <div
+              className="h-full bg-gray-300 rounded-r-full percent-bar"
+              style={{ width: animate ? `${percentB}%` : '0%' }}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 📄 질문 카드
+    // ========================================
+    function QuestionCard({ question, voted, onVote, onDelete }) {
+      const { id, title, choiceA, choiceB, category, votesA, votesB, totalVotes } = question;
+      const meta = categoryMeta[category] || { label: category, emoji: '❓', color: 'bg-gray-100 text-gray-600' };
+      const hasVoted = voted !== null && voted !== undefined;
+      const [deleting, setDeleting] = useState(false);
+
+      const handleDelete = async () => {
+        if (!confirm('이 질문을 삭제할까요?')) return;
+        setDeleting(true);
+        await onDelete(id);
+      };
+
+      const percentA = totalVotes > 0 ? Math.round((votesA / totalVotes) * 100) : 50;
+      const percentB = totalVotes > 0 ? 100 - percentA : 50;
+
+      const winnerA = percentA > percentB;
+      const winnerB = percentB > percentA;
+
+      return (
+        <Card className="fade-in-up">
+          <div className="p-5">
+            <div className="flex items-center justify-between mb-4">
+              <Badge emoji={meta.emoji} label={meta.label} colorClass={meta.color} />
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-400 font-medium">
+                  {totalVotes > 0 ? `${totalVotes}명 참여` : '아직 참여자 없음'}
+                </span>
+                <button
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="w-6 h-6 flex items-center justify-center rounded-full text-gray-300 hover:bg-red-50 hover:text-red-400 transition-colors disabled:opacity-40"
+                  title="질문 삭제"
+                >
+                  {deleting ? (
+                    <span className="w-3 h-3 border-2 border-red-300 border-t-transparent rounded-full animate-spin inline-block" />
+                  ) : (
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {title && <h3 className="text-sm font-semibold text-gray-800 mb-3">{title}</h3>}
+
+            {!hasVoted ? (
+              <div className="space-y-2.5">
+                <button
+                  onClick={() => onVote(id, 'A')}
+                  className="w-full px-4 py-3.5 rounded-xl border-2 border-blue-300 bg-white text-gray-700 font-medium text-sm hover:bg-blue-50 hover:border-blue-500 hover:text-blue-600 active:bg-blue-100 transition-all duration-200 text-left"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <span className="w-6 h-6 rounded-full bg-blue-500 text-white text-xs font-bold flex items-center justify-center flex-shrink-0">A</span>
+                    {choiceA}
+                  </span>
+                </button>
+                <div className="flex justify-center">
+                  <span className="text-xs font-bold text-gray-300">VS</span>
+                </div>
+                <button
+                  onClick={() => onVote(id, 'B')}
+                  className="w-full px-4 py-3.5 rounded-xl border-2 border-gray-200 bg-white text-gray-700 font-medium text-sm hover:bg-gray-50 hover:border-gray-400 active:bg-gray-100 transition-all duration-200 text-left"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <span className="w-6 h-6 rounded-full bg-gray-400 text-white text-xs font-bold flex items-center justify-center flex-shrink-0">B</span>
+                    {choiceB}
+                  </span>
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                <div className={`w-full px-4 py-3 rounded-xl border-2 text-sm font-medium text-left transition-all ${
+                  voted === 'A' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-100 bg-gray-50 text-gray-500'
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <span className="inline-flex items-center gap-2">
+                      <span className={`w-6 h-6 rounded-full text-white text-xs font-bold flex items-center justify-center flex-shrink-0 ${voted === 'A' ? 'bg-blue-500' : 'bg-gray-300'}`}>A</span>
+                      {choiceA}
+                    </span>
+                    <span className={`text-sm font-bold ${winnerA ? 'text-blue-600' : 'text-gray-400'}`}>{percentA}%</span>
+                  </div>
+                </div>
+                <div className="flex justify-center">
+                  <span className="text-xs font-bold text-gray-300">VS</span>
+                </div>
+                <div className={`w-full px-4 py-3 rounded-xl border-2 text-sm font-medium text-left transition-all ${
+                  voted === 'B' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-100 bg-gray-50 text-gray-500'
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <span className="inline-flex items-center gap-2">
+                      <span className={`w-6 h-6 rounded-full text-white text-xs font-bold flex items-center justify-center flex-shrink-0 ${voted === 'B' ? 'bg-blue-500' : 'bg-gray-300'}`}>B</span>
+                      {choiceB}
+                    </span>
+                    <span className={`text-sm font-bold ${winnerB ? 'text-blue-600' : 'text-gray-400'}`}>{percentB}%</span>
+                  </div>
+                </div>
+                <PercentBar percentA={percentA} percentB={percentB} />
+                <p className="text-center text-xs text-gray-400 mt-1">
+                  {voted === 'A' ? `"${choiceA}"` : `"${choiceB}"`}에 투표했어요
+                </p>
+              </div>
+            )}
+          </div>
+        </Card>
+      );
+    }
+
+    // ========================================
+    // 📄 인기 랭킹 섹션
+    // ========================================
+    function RankingSection({ questions }) {
+      const ranked = useMemo(() => {
+        return [...questions]
+          .filter(q => q.totalVotes > 0)
+          .sort((a, b) => b.totalVotes - a.totalVotes);
+      }, [questions]);
+
+      if (ranked.length === 0) return null;
+
+      const medals = ['🥇', '🥈', '🥉'];
+
+      return (
+        <div className="max-w-lg mx-auto px-4 mt-6 mb-2">
+          <h2 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1.5">
+            <span>🔥</span> 인기 랭킹
+          </h2>
+          <Card>
+            <div className="divide-y divide-gray-50">
+              {ranked.map((q, i) => {
+                const meta = categoryMeta[q.category] || { label: q.category, emoji: '❓', color: '' };
+                const percentA = Math.round((q.votesA / q.totalVotes) * 100);
+                const percentB = 100 - percentA;
+                const winner = percentA >= percentB ? q.choiceA : q.choiceB;
+                return (
+                  <div key={q.id} className="flex items-center gap-3 px-4 py-3">
+                    <span className="text-lg flex-shrink-0 w-7 text-center">{medals[i] || `${i + 1}`}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-700 truncate">
+                        {q.choiceA} vs {q.choiceB}
+                      </p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        우세: <span className="text-blue-500 font-medium">{winner}</span>
+                      </p>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-sm font-bold text-blue-600">{q.totalVotes}</p>
+                      <p className="text-[10px] text-gray-400">참여</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🚀 App Component
+    // ========================================
+    function App() {
+      const [questions, setQuestions] = useState([]);
+      const [votes, setVotes] = useState({});
+      const [activeCategory, setActiveCategory] = useState('all');
+      const [loading, setLoading] = useState(true);
+
+      useEffect(() => {
+        fetchQuestions()
+          .then(res => { if (res.success) setQuestions(res.data); })
+          .finally(() => setLoading(false));
+      }, []);
+
+      const handleVote = useCallback(async (questionId, choice) => {
+        if (votes[questionId]) return;
+        setVotes(prev => ({ ...prev, [questionId]: choice }));
+        setQuestions(prev =>
+          prev.map(q => {
+            if (q.id !== questionId) return q;
+            return {
+              ...q,
+              votesA: choice === 'A' ? q.votesA + 1 : q.votesA,
+              votesB: choice === 'B' ? q.votesB + 1 : q.votesB,
+              totalVotes: q.totalVotes + 1,
+            };
+          })
+        );
+        await postVote(questionId, choice);
+      }, [votes]);
+
+      const handleCreateQuestion = useCallback(async (data) => {
+        const res = await createQuestion(data);
+        if (res.success) {
+          setQuestions(prev => [res.data, ...prev]);
+        }
+      }, []);
+
+      const handleDeleteQuestion = useCallback(async (id) => {
+        const res = await deleteQuestion(id);
+        if (res.success) {
+          setQuestions(prev => prev.filter(q => q.id !== id));
+        }
+      }, []);
+
+      const filteredQuestions = useMemo(() => {
+        if (activeCategory === 'all') return questions;
+        return questions.filter(q => q.category === activeCategory);
+      }, [questions, activeCategory]);
+
+      return (
+        <div className="min-h-screen bg-slate-100 pb-8">
+          <Header />
+          <CategoryTabs active={activeCategory} onChange={setActiveCategory} />
+          <CreateQuestionForm onSubmit={handleCreateQuestion} />
+
+          <div className="max-w-lg mx-auto px-4 mt-4 space-y-4">
+            {loading ? (
+              <div className="flex justify-center py-12">
+                <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : filteredQuestions.length === 0 ? (
+              <Card className="p-8 text-center">
+                <p className="text-3xl mb-2">🤔</p>
+                <p className="text-sm text-gray-400">아직 질문이 없어요</p>
+                <p className="text-xs text-gray-300 mt-1">첫 번째 질문을 만들어보세요!</p>
+              </Card>
+            ) : (
+              filteredQuestions.map(q => (
+                <QuestionCard
+                  key={q.id}
+                  question={q}
+                  voted={votes[q.id] || null}
+                  onVote={handleVote}
+                  onDelete={handleDeleteQuestion}
+                />
+              ))
+            )}
+          </div>
+
+          <RankingSection questions={questions} />
+          <div className="h-4" />
+        </div>
+      );
+    }
+
+    // ========================================
+    // Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>냉장고 AI 레시피 관리</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    body {
+      background: linear-gradient(135deg, #FFF8F0 0%, #FFECD2 25%, #FFF5E1 50%, #FCE4C8 75%, #FFF0DB 100%);
+    }
+    .scrollbar-thin::-webkit-scrollbar {
+      width: 6px;
+    }
+    .scrollbar-thin::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .scrollbar-thin::-webkit-scrollbar-thumb {
+      background: #d4a373;
+      border-radius: 3px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .animate-spin {
+      animation: spin 1s linear infinite;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    // ========================================
+    // React Hooks Destructuring
+    // ========================================
+    const { useState, useEffect, useCallback } = React;
+
+    // ========================================
+    // API Configuration
+    // ========================================
+    const API_BASE = '/api';
+
+    // ========================================
+    // Design System Components
+    // ========================================
+    function Badge({ children, color = 'blue', className = '' }) {
+      const colorMap = {
+        blue: 'bg-blue-100 text-blue-700 border border-blue-200',
+        purple: 'bg-purple-100 text-purple-700 border border-purple-200',
+        green: 'bg-green-100 text-green-700 border border-green-200',
+        amber: 'bg-amber-100 text-amber-700 border border-amber-200',
+        indigo: 'bg-indigo-100 text-indigo-700 border border-indigo-200',
+        emerald: 'bg-emerald-100 text-emerald-700 border border-emerald-200',
+      };
+      return (
+        <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${colorMap[color] || colorMap.blue} ${className}`}>
+          {children}
+        </span>
+      );
+    }
+
+    function Button({ children, variant = 'primary', size = 'md', onClick, className = '', disabled = false }) {
+      const variants = {
+        primary: 'bg-amber-500 hover:bg-amber-600 text-white shadow-sm',
+        secondary: 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 shadow-sm',
+        danger: 'bg-red-400 hover:bg-red-500 text-white shadow-sm',
+        ghost: 'bg-transparent hover:bg-black/5 text-gray-600',
+        indigo: 'bg-indigo-500 hover:bg-indigo-600 text-white shadow-sm',
+        emerald: 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-sm',
+      };
+      const sizes = {
+        sm: 'px-2.5 py-1 text-xs rounded-md',
+        md: 'px-4 py-2 text-sm rounded-lg',
+        lg: 'px-6 py-2.5 text-base rounded-lg',
+      };
+      return (
+        <button
+          onClick={onClick}
+          disabled={disabled}
+          className={`font-medium transition-colors duration-150 ${variants[variant] || variants.primary} ${sizes[size]} ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} ${className}`}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    function Input({ label, value, onChange, placeholder, className = '', type = 'text' }) {
+      return (
+        <div className={className}>
+          {label && <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>}
+          <input
+            type={type}
+            value={value}
+            onChange={onChange}
+            placeholder={placeholder}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent bg-white"
+          />
+        </div>
+      );
+    }
+
+    function Textarea({ label, value, onChange, placeholder, rows = 3, className = '' }) {
+      return (
+        <div className={className}>
+          {label && <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>}
+          <textarea
+            value={value}
+            onChange={onChange}
+            placeholder={placeholder}
+            rows={rows}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent bg-white resize-vertical"
+          />
+        </div>
+      );
+    }
+
+    function Card({ children, className = '' }) {
+      return (
+        <div className={`bg-white/80 backdrop-blur-sm rounded-xl shadow-sm border border-white/50 ${className}`}>
+          {children}
+        </div>
+      );
+    }
+
+    function Modal({ isOpen, onClose, title, children }) {
+      if (!isOpen) return null;
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose}></div>
+          <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 p-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-bold text-gray-800">{title}</h2>
+              <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none cursor-pointer" aria-label="닫기">&times;</button>
+            </div>
+            {children}
+          </div>
+        </div>
+      );
+    }
+
+    function Spinner({ text = '로딩 중...' }) {
+      return (
+        <div className="flex flex-col items-center justify-center py-8 gap-3">
+          <div className="w-8 h-8 border-4 border-amber-200 border-t-amber-500 rounded-full animate-spin"></div>
+          <p className="text-sm text-gray-500">{text}</p>
+        </div>
+      );
+    }
+
+    function ErrorBanner({ message, onDismiss }) {
+      if (!message) return null;
+      return (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 mb-2 flex items-center justify-between">
+          <span>{message}</span>
+          <button onClick={onDismiss} className="text-red-400 hover:text-red-600 ml-2 cursor-pointer">&times;</button>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Ingredient Panel Components (Left - 30%)
+    // ========================================
+    function IngredientCard({ ingredient, onEdit, onDelete }) {
+      const categoryColor = {
+        '냉장': 'blue',
+        '냉동': 'purple',
+        '상온': 'green',
+      };
+      return (
+        <Card className="p-3 flex items-center justify-between">
+          <div className="flex items-center gap-3 min-w-0">
+            <span className="text-sm font-semibold text-gray-800 truncate">{ingredient.name}</span>
+            <Badge color={categoryColor[ingredient.category]}>{ingredient.category}</Badge>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <span className="text-sm text-gray-500 font-medium">{ingredient.amount}</span>
+            <button onClick={() => onEdit(ingredient)} className="text-sm hover:bg-amber-100 rounded p-0.5 cursor-pointer transition-colors" aria-label="수정" title="수정">&#x270F;&#xFE0F;</button>
+            <button onClick={() => onDelete(ingredient.id)} className="text-sm hover:bg-red-100 rounded p-0.5 cursor-pointer transition-colors" aria-label="삭제" title="삭제">&#x1F5D1;&#xFE0F;</button>
+          </div>
+        </Card>
+      );
+    }
+
+    function IngredientFormModal({ isOpen, onClose, onSave, editingIngredient }) {
+      const [name, setName] = useState('');
+      const [amount, setAmount] = useState('');
+      const [category, setCategory] = useState('냉장');
+
+      useEffect(() => {
+        if (editingIngredient) {
+          setName(editingIngredient.name);
+          setAmount(editingIngredient.amount);
+          setCategory(editingIngredient.category);
+        } else {
+          setName('');
+          setAmount('');
+          setCategory('냉장');
+        }
+      }, [editingIngredient, isOpen]);
+
+      const handleSave = () => {
+        if (!name.trim() || !amount.trim()) return;
+        onSave({ name: name.trim(), amount: amount.trim(), category });
+      };
+
+      return (
+        <Modal isOpen={isOpen} onClose={onClose} title={editingIngredient ? '재료 수정' : '재료 추가'}>
+          <div className="space-y-4">
+            <Input label="재료명" value={name} onChange={e => setName(e.target.value)} placeholder="예: 양파" />
+            <Input label="수량" value={amount} onChange={e => setAmount(e.target.value)} placeholder="예: 2개, 300g" />
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">보관 분류</label>
+              <select
+                value={category}
+                onChange={e => setCategory(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent bg-white cursor-pointer"
+              >
+                <option value="냉장">냉장</option>
+                <option value="냉동">냉동</option>
+                <option value="상온">상온</option>
+              </select>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="secondary" onClick={onClose}>취소</Button>
+              <Button variant="primary" onClick={handleSave} disabled={!name.trim() || !amount.trim()}>저장</Button>
+            </div>
+          </div>
+        </Modal>
+      );
+    }
+
+    function AIIngredientModal({ isOpen, onClose, onIngredientsAdded, currentIngredients }) {
+      const [count, setCount] = useState(5);
+      const [loading, setLoading] = useState(false);
+      const [suggestions, setSuggestions] = useState([]);
+      const [selected, setSelected] = useState({});
+      const [error, setError] = useState(null);
+      const [saving, setSaving] = useState(false);
+
+      const countOptions = [1, 2, 5];
+
+      useEffect(() => {
+        if (isOpen) {
+          setCount(10);
+          setSuggestions([]);
+          setSelected({});
+          setError(null);
+        }
+      }, [isOpen]);
+
+      const handleGenerate = async () => {
+        setLoading(true);
+        setError(null);
+        setSuggestions([]);
+        setSelected({});
+        try {
+          const existing = (currentIngredients || []).map(i => i.name);
+          const res = await fetch(`${API_BASE}/ai/ingredients`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ count, existing }),
+          });
+          const json = await res.json();
+          if (json.success && json.data) {
+            setSuggestions(json.data);
+            const all = {};
+            json.data.forEach((_, i) => { all[i] = true; });
+            setSelected(all);
+          } else {
+            setError(json.message || 'AI 추천을 받지 못했습니다.');
+          }
+        } catch {
+          setError('AI 서버에 연결할 수 없습니다.');
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const toggleSelect = (idx) => {
+        setSelected(prev => ({ ...prev, [idx]: !prev[idx] }));
+      };
+
+      const toggleAll = () => {
+        const allSelected = suggestions.every((_, i) => selected[i]);
+        const next = {};
+        if (!allSelected) suggestions.forEach((_, i) => { next[i] = true; });
+        setSelected(next);
+      };
+
+      const handleAddSelected = async () => {
+        const items = suggestions.filter((_, i) => selected[i]);
+        if (items.length === 0) return;
+        setSaving(true);
+        setError(null);
+        try {
+          for (const item of items) {
+            await fetch(`${API_BASE}/ingredients`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: item.name, amount: item.amount, category: item.category || '냉장' }),
+            });
+          }
+          onIngredientsAdded();
+          onClose();
+        } catch {
+          setError('재료 저장 중 오류가 발생했습니다.');
+        } finally {
+          setSaving(false);
+        }
+      };
+
+      const selectedCount = Object.values(selected).filter(Boolean).length;
+
+      return (
+        <Modal isOpen={isOpen} onClose={onClose} title="AI 재료 추천">
+          <div className="space-y-4">
+            {/* 생성 개수 선택 */}
+            <div>
+              <p className="text-sm font-medium text-gray-700 mb-2">생성 개수 선택</p>
+              <div className="flex gap-2">
+                {countOptions.map(n => (
+                  <button
+                    key={n}
+                    onClick={() => setCount(n)}
+                    className={`flex-1 py-2 rounded-lg text-sm font-semibold cursor-pointer border transition-colors ${count === n ? 'bg-indigo-500 text-white border-indigo-500' : 'bg-white text-gray-700 border-gray-300 hover:bg-indigo-50'}`}
+                  >
+                    {n}개
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <Button variant="indigo" onClick={handleGenerate} disabled={loading} className="w-full">
+              {loading ? '생성 중...' : `AI 재료 ${count}개 생성`}
+            </Button>
+
+            {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
+            {loading && <Spinner text="AI가 재료를 추천하고 있어요..." />}
+
+            {suggestions.length > 0 && !loading && (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm font-medium text-gray-700">추천 재료 ({suggestions.length}개)</p>
+                  <button onClick={toggleAll} className="text-xs text-indigo-600 hover:text-indigo-800 cursor-pointer">
+                    {suggestions.every((_, i) => selected[i]) ? '전체 해제' : '전체 선택'}
+                  </button>
+                </div>
+                <div className="space-y-1.5 max-h-60 overflow-y-auto scrollbar-thin">
+                  {suggestions.map((item, idx) => (
+                    <label key={idx} className={`flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer transition-colors ${selected[idx] ? 'bg-indigo-50 border-indigo-200' : 'bg-white border-gray-200 hover:bg-gray-50'}`}>
+                      <input
+                        type="checkbox"
+                        checked={!!selected[idx]}
+                        onChange={() => toggleSelect(idx)}
+                        className="w-4 h-4 text-indigo-600 rounded cursor-pointer"
+                      />
+                      <span className="text-sm font-medium text-gray-800 flex-1">{item.name}</span>
+                      <span className="text-xs text-gray-500">{item.amount}</span>
+                      <Badge color={item.category === '냉동' ? 'purple' : item.category === '상온' ? 'green' : 'blue'}>
+                        {item.category || '냉장'}
+                      </Badge>
+                    </label>
+                  ))}
+                </div>
+                <div className="flex justify-end gap-2 pt-3">
+                  <Button variant="secondary" onClick={onClose}>취소</Button>
+                  <Button variant="indigo" onClick={handleAddSelected} disabled={selectedCount === 0 || saving}>
+                    {saving ? '저장 중...' : `선택 추가 (${selectedCount}개)`}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </Modal>
+      );
+    }
+
+    function AIRecipeGenerateModal({ isOpen, onClose, onRecipeSaved }) {
+      const [style, setStyle] = useState('');
+      const [loading, setLoading] = useState(false);
+      const [generatedRecipe, setGeneratedRecipe] = useState(null);
+      const [error, setError] = useState(null);
+      const [saving, setSaving] = useState(false);
+
+      const styles = ['간단 요리', '다이어트', '야식', '한식', '기타'];
+
+      useEffect(() => {
+        if (isOpen) {
+          setStyle('');
+          setGeneratedRecipe(null);
+          setError(null);
+        }
+      }, [isOpen]);
+
+      const handleGenerate = async () => {
+        setLoading(true);
+        setError(null);
+        setGeneratedRecipe(null);
+        try {
+          const res = await fetch(`${API_BASE}/ai/recipes/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ style }),
+          });
+          const json = await res.json();
+          if (json.success && json.data) {
+            setGeneratedRecipe(json.data);
+          } else {
+            setError(json.message || '레시피 생성에 실패했습니다.');
+          }
+        } catch {
+          setError('AI 서버에 연결할 수 없습니다.');
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const handleSave = async () => {
+        if (!generatedRecipe) return;
+        setSaving(true);
+        setError(null);
+        try {
+          const res = await fetch(`${API_BASE}/ai-recipes`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              title: generatedRecipe.title,
+              ingredients: generatedRecipe.ingredients,
+              steps: generatedRecipe.steps,
+            }),
+          });
+          const json = await res.json();
+          if (json.success) {
+            onRecipeSaved();
+            onClose();
+          } else {
+            setError(json.message || '저장에 실패했습니다.');
+          }
+        } catch {
+          setError('저장 중 오류가 발생했습니다.');
+        } finally {
+          setSaving(false);
+        }
+      };
+
+      const handleRegenerate = () => {
+        setGeneratedRecipe(null);
+        handleGenerate();
+      };
+
+      return (
+        <Modal isOpen={isOpen} onClose={onClose} title="AI 레시피 생성">
+          <div className="space-y-4">
+            {!generatedRecipe && !loading && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">요리 스타일 선택</label>
+                  <div className="flex flex-wrap gap-2">
+                    {styles.map(s => (
+                      <button
+                        key={s}
+                        onClick={() => setStyle(s)}
+                        className={`px-4 py-2 rounded-lg text-sm font-medium cursor-pointer transition-colors border ${style === s ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button variant="secondary" onClick={onClose}>취소</Button>
+                  <Button variant="emerald" onClick={handleGenerate}>레시피 생성</Button>
+                </div>
+              </>
+            )}
+
+            {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
+
+            {loading && <Spinner text="AI가 레시피를 만들고 있어요..." />}
+
+            {generatedRecipe && !loading && (
+              <div>
+                <Card className="p-4 mb-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <h3 className="text-lg font-bold text-gray-800">{generatedRecipe.title}</h3>
+                    <Badge color="emerald">AI 생성</Badge>
+                  </div>
+                  <div className="mb-3">
+                    <span className="text-xs font-semibold text-emerald-600 uppercase tracking-wide">재료</span>
+                    <p className="text-sm text-gray-600 mt-1 whitespace-pre-line">{generatedRecipe.ingredients}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs font-semibold text-emerald-600 uppercase tracking-wide">조리법</span>
+                    <p className="text-sm text-gray-600 mt-1 whitespace-pre-line">{generatedRecipe.steps}</p>
+                  </div>
+                </Card>
+                <div className="flex justify-end gap-2">
+                  <Button variant="secondary" onClick={onClose}>취소</Button>
+                  <Button variant="secondary" onClick={handleRegenerate}>다시 생성</Button>
+                  <Button variant="emerald" onClick={handleSave} disabled={saving}>
+                    {saving ? '저장 중...' : '저장'}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </Modal>
+      );
+    }
+
+    function IngredientPanel() {
+      const [ingredients, setIngredients] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+      const [modalOpen, setModalOpen] = useState(false);
+      const [editingIngredient, setEditingIngredient] = useState(null);
+      const [aiIngredientModalOpen, setAiIngredientModalOpen] = useState(false);
+
+      const fetchIngredients = useCallback(async () => {
+        try {
+          setError(null);
+          const res = await fetch(`${API_BASE}/ingredients`);
+          const json = await res.json();
+          if (json.success) {
+            setIngredients(json.data);
+          } else {
+            setError(json.message || '재료 목록을 불러오지 못했습니다.');
+          }
+        } catch {
+          setError('서버에 연결할 수 없습니다.');
+        } finally {
+          setLoading(false);
+        }
+      }, []);
+
+      useEffect(() => {
+        fetchIngredients();
+      }, [fetchIngredients]);
+
+      const handleNew = () => {
+        setEditingIngredient(null);
+        setModalOpen(true);
+      };
+
+      const handleEdit = (ingredient) => {
+        setEditingIngredient(ingredient);
+        setModalOpen(true);
+      };
+
+      const handleDelete = async (id) => {
+        try {
+          const res = await fetch(`${API_BASE}/ingredients/${id}`, { method: 'DELETE' });
+          const json = await res.json();
+          if (json.success) {
+            await fetchIngredients();
+          } else {
+            setError(json.message || '삭제에 실패했습니다.');
+          }
+        } catch {
+          setError('삭제 중 오류가 발생했습니다.');
+        }
+      };
+
+      const handleSave = async (data) => {
+        try {
+          const isEdit = !!editingIngredient;
+          const url = isEdit
+            ? `${API_BASE}/ingredients/${editingIngredient.id}`
+            : `${API_BASE}/ingredients`;
+          const res = await fetch(url, {
+            method: isEdit ? 'PUT' : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+          });
+          const json = await res.json();
+          if (json.success) {
+            await fetchIngredients();
+            setModalOpen(false);
+            setEditingIngredient(null);
+          } else {
+            setError(json.message || '저장에 실패했습니다.');
+          }
+        } catch {
+          setError('저장 중 오류가 발생했습니다.');
+        }
+      };
+
+      return (
+        <div className="h-full flex flex-col">
+          <div className="px-4 py-4 border-b border-amber-200/50">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                  <span className="text-xl">&#x1F9CA;</span> 냉장고 재료
+                </h2>
+                <p className="text-xs text-gray-500 mt-0.5">총 {ingredients.length}개의 재료</p>
+              </div>
+              <Button variant="primary" size="sm" onClick={handleNew}>+ 재료 추가</Button>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="indigo" size="sm" onClick={() => setAiIngredientModalOpen(true)} className="flex-1">
+                &#x1F916; AI 재료 추천
+              </Button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto scrollbar-thin p-4 space-y-2">
+            <ErrorBanner message={error} onDismiss={() => setError(null)} />
+            {loading ? (
+              <div className="text-center py-16 text-gray-400">
+                <p className="text-sm">불러오는 중...</p>
+              </div>
+            ) : ingredients.length === 0 ? (
+              <div className="text-center py-16 text-gray-400">
+                <p className="text-4xl mb-3">&#x1F9CA;</p>
+                <p className="text-sm">등록된 재료가 없습니다.</p>
+                <p className="text-xs mt-1">재료를 추가해보세요!</p>
+              </div>
+            ) : (
+              ingredients.map(item => (
+                <IngredientCard key={item.id} ingredient={item} onEdit={handleEdit} onDelete={handleDelete} />
+              ))
+            )}
+          </div>
+
+          <IngredientFormModal
+            isOpen={modalOpen}
+            onClose={() => { setModalOpen(false); setEditingIngredient(null); }}
+            onSave={handleSave}
+            editingIngredient={editingIngredient}
+          />
+          <AIIngredientModal
+            isOpen={aiIngredientModalOpen}
+            onClose={() => setAiIngredientModalOpen(false)}
+            onIngredientsAdded={fetchIngredients}
+            currentIngredients={ingredients}
+          />
+        </div>
+      );
+    }
+
+    // ========================================
+    // Recipe Panel Components (Middle - 35%)
+    // ========================================
+    function RecipeCard({ recipe, onEdit, onDelete }) {
+      return (
+        <Card className="p-4">
+          <div className="flex items-start justify-between mb-2">
+            <h3 className="text-base font-bold text-gray-800">{recipe.title}</h3>
+            <div className="flex gap-1.5 flex-shrink-0 ml-3">
+              <Button variant="secondary" size="sm" onClick={() => onEdit(recipe)}>수정</Button>
+              <Button variant="danger" size="sm" onClick={() => onDelete(recipe.id)}>삭제</Button>
+            </div>
+          </div>
+          <div className="mb-2">
+            <span className="text-xs font-semibold text-amber-600 uppercase tracking-wide">재료</span>
+            <p className="text-sm text-gray-600 mt-0.5 whitespace-pre-line">{recipe.ingredients}</p>
+          </div>
+          <div>
+            <span className="text-xs font-semibold text-amber-600 uppercase tracking-wide">조리법</span>
+            <p className="text-sm text-gray-600 mt-0.5 whitespace-pre-line line-clamp-4">{recipe.steps}</p>
+          </div>
+        </Card>
+      );
+    }
+
+    function RecipeFormModal({ isOpen, onClose, onSave, editingRecipe }) {
+      const [title, setTitle] = useState('');
+      const [ingredients, setIngredients] = useState('');
+      const [steps, setSteps] = useState('');
+
+      useEffect(() => {
+        if (editingRecipe) {
+          setTitle(editingRecipe.title);
+          setIngredients(editingRecipe.ingredients);
+          setSteps(editingRecipe.steps);
+        } else {
+          setTitle('');
+          setIngredients('');
+          setSteps('');
+        }
+      }, [editingRecipe, isOpen]);
+
+      const handleSave = () => {
+        if (!title.trim()) return;
+        onSave({ title: title.trim(), ingredients: ingredients.trim(), steps: steps.trim() });
+      };
+
+      return (
+        <Modal isOpen={isOpen} onClose={onClose} title={editingRecipe ? '레시피 수정' : '새 레시피 등록'}>
+          <div className="space-y-4">
+            <Input label="요리명" value={title} onChange={e => setTitle(e.target.value)} placeholder="예: 김치찌개" />
+            <Textarea label="재료" value={ingredients} onChange={e => setIngredients(e.target.value)} placeholder="예: 김치 200g, 두부 1모, 대파 1대" rows={3} />
+            <Textarea label="조리법" value={steps} onChange={e => setSteps(e.target.value)} placeholder="예: 1. 냄비에 물을 끓인다..." rows={5} />
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="secondary" onClick={onClose}>취소</Button>
+              <Button variant="primary" onClick={handleSave} disabled={!title.trim()}>저장</Button>
+            </div>
+          </div>
+        </Modal>
+      );
+    }
+
+    function RecipePanel() {
+      const [recipes, setRecipes] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+      const [modalOpen, setModalOpen] = useState(false);
+      const [editingRecipe, setEditingRecipe] = useState(null);
+
+      const fetchRecipes = useCallback(async () => {
+        try {
+          setError(null);
+          const res = await fetch(`${API_BASE}/recipes`);
+          const json = await res.json();
+          if (json.success) {
+            setRecipes(json.data);
+          } else {
+            setError(json.message || '레시피 목록을 불러오지 못했습니다.');
+          }
+        } catch {
+          setError('서버에 연결할 수 없습니다.');
+        } finally {
+          setLoading(false);
+        }
+      }, []);
+
+      useEffect(() => {
+        fetchRecipes();
+      }, [fetchRecipes]);
+
+      const handleNew = () => {
+        setEditingRecipe(null);
+        setModalOpen(true);
+      };
+
+      const handleEdit = (recipe) => {
+        setEditingRecipe(recipe);
+        setModalOpen(true);
+      };
+
+      const handleDelete = async (id) => {
+        try {
+          const res = await fetch(`${API_BASE}/recipes/${id}`, { method: 'DELETE' });
+          const json = await res.json();
+          if (json.success) {
+            await fetchRecipes();
+          } else {
+            setError(json.message || '삭제에 실패했습니다.');
+          }
+        } catch {
+          setError('삭제 중 오류가 발생했습니다.');
+        }
+      };
+
+      const handleSave = async (data) => {
+        try {
+          const isEdit = !!editingRecipe;
+          const url = isEdit
+            ? `${API_BASE}/recipes/${editingRecipe.id}`
+            : `${API_BASE}/recipes`;
+          const res = await fetch(url, {
+            method: isEdit ? 'PUT' : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+          });
+          const json = await res.json();
+          if (json.success) {
+            await fetchRecipes();
+            setModalOpen(false);
+            setEditingRecipe(null);
+          } else {
+            setError(json.message || '저장에 실패했습니다.');
+          }
+        } catch {
+          setError('저장 중 오류가 발생했습니다.');
+        }
+      };
+
+      return (
+        <div className="h-full flex flex-col">
+          <div className="px-5 py-4 border-b border-amber-200/50 flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <span className="text-xl">&#x1F4DD;</span> 수기 레시피
+              </h2>
+              <p className="text-xs text-gray-500 mt-0.5">{recipes.length}개의 레시피</p>
+            </div>
+            <Button variant="primary" size="sm" onClick={handleNew}>+ 새 레시피</Button>
+          </div>
+          <div className="flex-1 overflow-y-auto scrollbar-thin p-4 space-y-3">
+            <ErrorBanner message={error} onDismiss={() => setError(null)} />
+            {loading ? (
+              <div className="text-center py-16 text-gray-400">
+                <p className="text-sm">불러오는 중...</p>
+              </div>
+            ) : recipes.length === 0 ? (
+              <div className="text-center py-16 text-gray-400">
+                <p className="text-4xl mb-3">&#x1F4DD;</p>
+                <p className="text-sm">등록된 레시피가 없습니다.</p>
+                <p className="text-xs mt-1">새 레시피를 추가해보세요!</p>
+              </div>
+            ) : (
+              recipes.map(recipe => (
+                <RecipeCard key={recipe.id} recipe={recipe} onEdit={handleEdit} onDelete={handleDelete} />
+              ))
+            )}
+          </div>
+          <RecipeFormModal
+            isOpen={modalOpen}
+            onClose={() => { setModalOpen(false); setEditingRecipe(null); }}
+            onSave={handleSave}
+            editingRecipe={editingRecipe}
+          />
+        </div>
+      );
+    }
+
+    // ========================================
+    // AI Recipe Panel Components (Right - 35%)
+    // ========================================
+    function AIRecipeCard({ recipe, onDelete }) {
+      return (
+        <Card className="p-4">
+          <div className="flex items-start justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-bold text-gray-800">{recipe.title}</h3>
+              <Badge color="emerald">AI 생성</Badge>
+            </div>
+            <Button variant="danger" size="sm" onClick={() => onDelete(recipe.id)} className="flex-shrink-0 ml-3">삭제</Button>
+          </div>
+          <div className="mb-2">
+            <span className="text-xs font-semibold text-emerald-600 uppercase tracking-wide">재료</span>
+            <p className="text-sm text-gray-600 mt-0.5 whitespace-pre-line">{recipe.ingredients}</p>
+          </div>
+          <div>
+            <span className="text-xs font-semibold text-emerald-600 uppercase tracking-wide">조리법</span>
+            <p className="text-sm text-gray-600 mt-0.5 whitespace-pre-line">{recipe.steps}</p>
+          </div>
+        </Card>
+      );
+    }
+
+    function AIRecipePanel({ refreshKey }) {
+      const [recipes, setRecipes] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+      const [aiRecipeModalOpen, setAiRecipeModalOpen] = useState(false);
+
+      const fetchAIRecipes = useCallback(async () => {
+        try {
+          setError(null);
+          const res = await fetch(`${API_BASE}/ai-recipes`);
+          const json = await res.json();
+          if (json.success) {
+            setRecipes(json.data);
+          } else {
+            setError(json.message || 'AI 레시피를 불러오지 못했습니다.');
+          }
+        } catch {
+          setError('서버에 연결할 수 없습니다.');
+        } finally {
+          setLoading(false);
+        }
+      }, []);
+
+      useEffect(() => {
+        fetchAIRecipes();
+      }, [fetchAIRecipes, refreshKey]);
+
+      const handleDelete = async (id) => {
+        try {
+          const res = await fetch(`${API_BASE}/ai-recipes/${id}`, { method: 'DELETE' });
+          const json = await res.json();
+          if (json.success) {
+            await fetchAIRecipes();
+          } else {
+            setError(json.message || '삭제에 실패했습니다.');
+          }
+        } catch {
+          setError('삭제 중 오류가 발생했습니다.');
+        }
+      };
+
+      return (
+        <div className="h-full flex flex-col">
+          <div className="px-5 py-4 border-b border-amber-200/50">
+            <div className="flex items-center justify-between mb-1">
+              <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <span className="text-xl">&#x1F916;</span> AI 레시피
+              </h2>
+              <Button variant="emerald" size="sm" onClick={() => setAiRecipeModalOpen(true)}>
+                &#x2728; AI 레시피 생성
+              </Button>
+            </div>
+            <p className="text-xs text-gray-500">저장된 {recipes.length}개</p>
+          </div>
+          <div className="flex-1 overflow-y-auto scrollbar-thin p-4 space-y-3">
+            <ErrorBanner message={error} onDismiss={() => setError(null)} />
+            {loading ? (
+              <div className="text-center py-16 text-gray-400">
+                <p className="text-sm">불러오는 중...</p>
+              </div>
+            ) : recipes.length === 0 ? (
+              <div className="text-center py-16 text-gray-400">
+                <p className="text-4xl mb-3">&#x1F916;</p>
+                <p className="text-sm">아직 AI 레시피가 없어요.</p>
+                <p className="text-xs mt-1">왼쪽에서 AI 레시피 생성 버튼을 눌러보세요!</p>
+              </div>
+            ) : (
+              recipes.map(recipe => (
+                <AIRecipeCard key={recipe.id} recipe={recipe} onDelete={handleDelete} />
+              ))
+            )}
+          </div>
+          <AIRecipeGenerateModal
+            isOpen={aiRecipeModalOpen}
+            onClose={() => setAiRecipeModalOpen(false)}
+            onRecipeSaved={() => { fetchAIRecipes(); }}
+          />
+        </div>
+      );
+    }
+
+    // ========================================
+    // App Component
+    // ========================================
+    function App() {
+      return (
+        <div className="min-h-screen flex flex-col">
+          {/* Header */}
+          <header className="bg-white/70 backdrop-blur-md border-b border-amber-200/50 px-6 py-3 text-center shadow-sm">
+            <h1 className="text-2xl font-bold text-gray-800">
+              <span className="mr-2">&#x1F37D;&#xFE0F;</span>냉장고 AI 레시피 관리
+            </h1>
+          </header>
+
+          {/* Main Content - 3 Column Layout */}
+          <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+            {/* Left Panel - Ingredients (30%) */}
+            <aside className="w-full md:w-[30%] bg-white/40 backdrop-blur-sm border-b md:border-b-0 md:border-r border-amber-200/50 overflow-hidden flex flex-col max-h-[50vh] md:max-h-none">
+              <IngredientPanel />
+            </aside>
+
+            {/* Middle Panel - Manual Recipes (35%) */}
+            <section className="w-full md:w-[35%] bg-white/40 backdrop-blur-sm border-b md:border-b-0 md:border-r border-amber-200/50 overflow-hidden flex flex-col max-h-[50vh] md:max-h-none">
+              <RecipePanel />
+            </section>
+
+            {/* Right Panel - AI Recipes (35%) */}
+            <section className="w-full md:w-[35%] overflow-hidden flex flex-col flex-1">
+              <AIRecipePanel />
+            </section>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
