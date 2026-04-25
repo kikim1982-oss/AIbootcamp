@@ -9,10 +9,39 @@ description: 냉장고 재료 JSON 파일을 읽어 레시피를 생성하고, f
 
 아래 단계를 순서대로 수행하세요.
 
+### 0단계 — 재료 폴더 경로 확인
+
+스킬 실행 시 인자(ARGUMENTS)로 경로가 주어진 경우 그 경로를 사용하세요.
+인자가 없으면 사용자에게 다음과 같이 물어보세요:
+
+> "재료 JSON 파일이 있는 폴더 경로를 알려주세요. (기본값: `week-4/quest/Q1/ingredients/`)"
+
+사용자가 경로를 입력하지 않거나 Enter를 누르면 기본값 `week-4/quest/Q1/ingredients/`를 사용합니다.
+확정된 경로를 `[INGREDIENTS_DIR]`로 기억하고 이후 단계에서 사용하세요.
+
 ### 1단계 — 재료 파일 읽기
 
-`week-4/quest/Q1/ingredients/` 폴더 안의 **모든 `.json` 파일**을 읽으세요.
+`[INGREDIENTS_DIR]` 폴더 안의 **모든 `.json` 파일**을 읽으세요.
 각 파일에서 `name`, `quantity`, `category` 필드를 파악합니다.
+
+**JSON 파일이 하나도 없는 경우**, 아래 10가지 기본 재료를 임의로 생성해 사용하세요:
+
+```json
+[
+  { "name": "계란", "quantity": "3개", "category": "단백질" },
+  { "name": "김치", "quantity": "100g", "category": "발효식품" },
+  { "name": "밥", "quantity": "1공기", "category": "탄수화물" },
+  { "name": "대파", "quantity": "1/2대", "category": "채소" },
+  { "name": "간장", "quantity": "2큰술", "category": "양념" },
+  { "name": "참기름", "quantity": "1작은술", "category": "양념" },
+  { "name": "마늘", "quantity": "2쪽", "category": "향신채" },
+  { "name": "두부", "quantity": "1/2모", "category": "단백질" },
+  { "name": "당근", "quantity": "1/4개", "category": "채소" },
+  { "name": "소금", "quantity": "약간", "category": "양념" }
+]
+```
+
+사용자에게 "재료 파일이 없어 기본 재료 10가지로 레시피를 만들게요." 라고 알려주세요.
 
 ### 2단계 — 레시피 생성
 
