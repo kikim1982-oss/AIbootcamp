@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>💰 가계부 - 나의 머니 다이어리</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <style>
+    /* 부드러운 등장 애니메이션 */
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .fade-in-up { animation: fadeInUp 0.25s ease-out; }
+
+    /* 스크롤바 살짝 다듬기 */
+    .nice-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+    .nice-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+    .nice-scroll::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-slate-50 via-indigo-50 to-slate-100 min-h-screen">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    // ========================================
+    // 1) React Hooks Destructuring
+    // ========================================
+    const { useState, useEffect, useMemo, useCallback, useRef } = React;
+
+    // ========================================
+    // 2) 상수 / 카테고리 정의
+    // ========================================
+    const API_BASE_URL = '/api';
+
+    // 카테고리 색상은 서버(categories 테이블)에서 받은 color 문자열을 기반으로 동적으로 만듦.
+    // Tailwind JIT 가 동적 클래스를 잡지 못하는 경우를 대비해 색상 → 클래스 매핑을 명시한다.
+    // (모든 클래스 문자열을 빌드 타임에 보이게 적어두는 것이 핵심)
+    const COLOR_CLASSES = {
+      emerald:  'bg-emerald-100 text-emerald-700 ring-emerald-200',
+      green:    'bg-green-100 text-green-700 ring-green-200',
+      lime:     'bg-lime-100 text-lime-700 ring-lime-200',
+      teal:     'bg-teal-100 text-teal-700 ring-teal-200',
+      cyan:     'bg-cyan-100 text-cyan-700 ring-cyan-200',
+      sky:      'bg-sky-100 text-sky-700 ring-sky-200',
+      indigo:   'bg-indigo-100 text-indigo-700 ring-indigo-200',
+      violet:   'bg-violet-100 text-violet-700 ring-violet-200',
+      fuchsia:  'bg-fuchsia-100 text-fuchsia-700 ring-fuchsia-200',
+      pink:     'bg-pink-100 text-pink-700 ring-pink-200',
+      rose:     'bg-rose-100 text-rose-700 ring-rose-200',
+      red:      'bg-red-100 text-red-700 ring-red-200',
+      orange:   'bg-orange-100 text-orange-700 ring-orange-200',
+      amber:    'bg-amber-100 text-amber-700 ring-amber-200',
+      gray:     'bg-slate-100 text-slate-700 ring-slate-200',
+      slate:    'bg-slate-100 text-slate-700 ring-slate-200',
+    };
+    const colorClassFor = (color) => COLOR_CLASSES[color] || COLOR_CLASSES.gray;
+
+    // 막대 그래프용 그라디언트 (수입/지출 구분)
+    const BAR_GRADIENT = {
+      income:  'bg-gradient-to-r from-emerald-400 to-emerald-600',
+      expense: 'bg-gradient-to-r from-rose-400 to-rose-600',
+    };
+
+    // Chart.js 도넛차트용 hex 색상 매핑 (Tailwind 500 톤 기반)
+    const COLOR_HEX = {
+      emerald: '#10b981', green: '#22c55e', lime: '#84cc16', teal: '#14b8a6',
+      cyan: '#06b6d4', sky: '#0ea5e9', indigo: '#6366f1', violet: '#8b5cf6',
+      purple: '#a855f7', fuchsia: '#d946ef', pink: '#ec4899', rose: '#f43f5e',
+      red: '#ef4444', orange: '#f97316', amber: '#f59e0b', yellow: '#eab308',
+      brown: '#a16207', gray: '#64748b', slate: '#64748b',
+    };
+    const colorHexFor = (color) => COLOR_HEX[color] || COLOR_HEX.gray;
+
+    // ========================================
+    // 3) 유틸리티 함수
+    // ========================================
+    const formatKRW = (n) => `${Number(n || 0).toLocaleString('ko-KR')}원`;
+    const formatKRWSigned = (type, n) => `${type === 'income' ? '+' : '-'}${formatKRW(n)}`;
+    const todayISO = () => dayjs().format('YYYY-MM-DD');
+    const monthOf = (dateStr) => dayjs(dateStr).format('YYYY-MM');
+
+    // ========================================
+    // 4) API 호출 헬퍼
+    // ========================================
+    // 공통 envelope 처리: { success, data, message } 를 풀어서 반환
+    async function apiFetch(path, options = {}) {
+      const res = await fetch(`${API_BASE_URL}${path}`, {
+        headers: { 'Content-Type': 'application/json' },
+        ...options,
+      });
+      let body = null;
+      try { body = await res.json(); } catch (_) { /* non-JSON */ }
+      if (!res.ok || !body || body.success !== true) {
+        const msg = (body && body.message) || `요청 실패 (${res.status})`;
+        throw new Error(msg);
+      }
+      return body.data;
+    }
+
+    // ========================================
+    // 5) 데이터 fetch 훅 — transactions / categories 동시 로드
+    // ========================================
+    function useInitialFetch() {
+      const [transactions, setTransactions] = useState(null);
+      const [categories, setCategories] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+
+      useEffect(() => {
+        let alive = true;
+        setLoading(true);
+        Promise.all([
+          apiFetch('/transactions'),
+          apiFetch('/categories'),
+        ])
+          .then(([txs, cats]) => {
+            if (!alive) return;
+            setTransactions(txs);
+            setCategories(cats);
+          })
+          .catch((e) => alive && setError(e.message || String(e)))
+          .finally(() => alive && setLoading(false));
+        return () => { alive = false; };
+      }, []);
+
+      return { transactions, categories, loading, error, setTransactions };
+    }
+
+    // ========================================
+    // 🎨 Design System Components
+    // ========================================
+
+    function Button({ variant = 'primary', size = 'md', disabled, onClick, type = 'button', className = '', children }) {
+      const base = 'inline-flex items-center justify-center font-semibold rounded-xl transition active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-1';
+      const sizes = {
+        sm: 'px-3 py-1.5 text-sm',
+        md: 'px-4 py-2 text-sm',
+        lg: 'px-5 py-3 text-base',
+      };
+      const variants = {
+        primary:   'bg-indigo-500 hover:bg-indigo-600 text-white shadow-sm shadow-indigo-200 focus:ring-indigo-300',
+        secondary: 'bg-slate-100 hover:bg-slate-200 text-slate-700 focus:ring-slate-300',
+        danger:    'bg-rose-500 hover:bg-rose-600 text-white shadow-sm shadow-rose-200 focus:ring-rose-300',
+        ghost:     'bg-transparent hover:bg-slate-100 text-slate-600 focus:ring-slate-200',
+      };
+      return (
+        <button type={type} disabled={disabled} onClick={onClick}
+          className={`${base} ${sizes[size]} ${variants[variant]} ${className}`}>
+          {children}
+        </button>
+      );
+    }
+
+    function Input({ type = 'text', label, value, onChange, placeholder, error, disabled, inputMode, min, className = '' }) {
+      return (
+        <label className={`block ${className}`}>
+          {label && <span className="block text-sm font-medium text-slate-700 mb-1.5">{label}</span>}
+          <input
+            type={type}
+            value={value}
+            onChange={onChange}
+            placeholder={placeholder}
+            disabled={disabled}
+            inputMode={inputMode}
+            min={min}
+            className={`w-full px-3.5 py-2.5 rounded-xl border bg-white text-slate-800 placeholder-slate-400
+              focus:outline-none focus:ring-2 transition
+              ${error
+                ? 'border-rose-300 focus:ring-rose-300'
+                : 'border-slate-200 focus:border-indigo-300 focus:ring-indigo-200'}`}
+          />
+          {error && <span className="mt-1 block text-xs text-rose-500">{error}</span>}
+        </label>
+      );
+    }
+
+    function Select({ label, options, value, onChange, error, className = '', placeholder }) {
+      return (
+        <label className={`block ${className}`}>
+          {label && <span className="block text-sm font-medium text-slate-700 mb-1.5">{label}</span>}
+          <select
+            value={value}
+            onChange={onChange}
+            className={`w-full px-3.5 py-2.5 rounded-xl border bg-white text-slate-800 transition
+              focus:outline-none focus:ring-2
+              ${error
+                ? 'border-rose-300 focus:ring-rose-300'
+                : 'border-slate-200 focus:border-indigo-300 focus:ring-indigo-200'}`}
+          >
+            {placeholder && <option value="">{placeholder}</option>}
+            {options.map((o) => (
+              <option key={o.value ?? o} value={o.value ?? o}>{o.label ?? o}</option>
+            ))}
+          </select>
+          {error && <span className="mt-1 block text-xs text-rose-500">{error}</span>}
+        </label>
+      );
+    }
+
+    function Card({ children, className = '' }) {
+      return (
+        <div className={`bg-white rounded-2xl shadow-sm ring-1 ring-slate-100 p-5 sm:p-6 ${className}`}>
+          {children}
+        </div>
+      );
+    }
+
+    function Badge({ category, type, color, icon, className = '' }) {
+      const cls = colorClassFor(color);
+      return (
+        <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full ring-1 ${cls} ${className}`}>
+          <span aria-hidden="true">{icon || (type === 'income' ? '↑' : '↓')}</span>
+          <span>{category}</span>
+        </span>
+      );
+    }
+
+    function SummaryCard({ icon, label, amount, theme = 'indigo' }) {
+      const themes = {
+        emerald: { ring: 'ring-emerald-100', bg: 'bg-emerald-50',  text: 'text-emerald-600', icon: 'bg-emerald-500/10' },
+        rose:    { ring: 'ring-rose-100',    bg: 'bg-rose-50',     text: 'text-rose-600',    icon: 'bg-rose-500/10' },
+        indigo:  { ring: 'ring-indigo-100',  bg: 'bg-indigo-50',   text: 'text-indigo-600',  icon: 'bg-indigo-500/10' },
+        slate:   { ring: 'ring-slate-200',   bg: 'bg-slate-50',    text: 'text-slate-600',   icon: 'bg-slate-500/10' },
+      };
+      const t = themes[theme] || themes.indigo;
+      const negative = amount < 0;
+      return (
+        <Card className={`${t.bg} ring-1 ${t.ring}`}>
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="text-sm text-slate-500 font-medium">{label}</div>
+              <div className={`mt-2 text-2xl sm:text-3xl font-extrabold tracking-tight ${t.text}`}>
+                {negative ? '-' : ''}{formatKRW(Math.abs(amount))}
+              </div>
+            </div>
+            <div className={`w-10 h-10 rounded-xl ${t.icon} flex items-center justify-center text-xl`}>
+              {icon}
+            </div>
+          </div>
+        </Card>
+      );
+    }
+
+    // ========================================
+    // 🧩 헤더
+    // ========================================
+    function Header() {
+      return (
+        <header className="mb-6 sm:mb-8">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-indigo-500 text-white flex items-center justify-center text-2xl shadow-md shadow-indigo-200">
+              💰
+            </div>
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-800 tracking-tight">가계부</h1>
+              <p className="text-sm text-slate-500">매일의 작은 기록이 큰 변화를 만들어요</p>
+            </div>
+          </div>
+        </header>
+      );
+    }
+
+    // ========================================
+    // 📄 요약 카드 섹션
+    // ========================================
+    function SummarySection({ income, expense }) {
+      const balance = income - expense;
+      return (
+        <section className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+          <SummaryCard icon="📈" label="이번 달 수입" amount={income}  theme="emerald" />
+          <SummaryCard icon="📉" label="이번 달 지출" amount={expense} theme="rose" />
+          <SummaryCard icon="💼" label="잔액"          amount={balance} theme={balance >= 0 ? 'indigo' : 'slate'} />
+        </section>
+      );
+    }
+
+    // ========================================
+    // 📄 입력 폼
+    // ========================================
+    function TransactionForm({ onAdd, categories }) {
+      const [type, setType]         = useState('expense');
+      const [date, setDate]         = useState(todayISO());
+      const [category, setCategory] = useState('');
+      const [amount, setAmount]     = useState('');
+      const [memo, setMemo]         = useState('');
+      const [errors, setErrors]     = useState({});
+      const [submitting, setSubmitting] = useState(false);
+      const [serverError, setServerError] = useState('');
+
+      // type 바뀔 때 카테고리 리셋
+      useEffect(() => { setCategory(''); setServerError(''); }, [type]);
+
+      // 서버에서 받은 카테고리 목록 (type별 필터)
+      const categoryOptions = useMemo(() => {
+        return (categories || [])
+          .filter((c) => c.type === type)
+          .map((c) => ({ value: c.name, label: `${c.icon || ''} ${c.name}`.trim() }));
+      }, [categories, type]);
+
+      // 천 단위 콤마 표시용
+      const displayAmount = amount === '' ? '' : Number(amount).toLocaleString('ko-KR');
+      const handleAmountChange = (e) => {
+        const raw = e.target.value.replace(/[^\d]/g, '');
+        setAmount(raw);
+      };
+
+      const validate = () => {
+        const er = {};
+        if (!category) er.category = '카테고리를 선택해 주세요';
+        const n = Number(amount);
+        if (!amount || n <= 0 || isNaN(n)) er.amount = '0보다 큰 금액을 입력해 주세요';
+        if (!date) er.date = '날짜를 선택해 주세요';
+        setErrors(er);
+        return Object.keys(er).length === 0;
+      };
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        setServerError('');
+        if (!validate()) return;
+        setSubmitting(true);
+        try {
+          const created = await apiFetch('/transactions', {
+            method: 'POST',
+            body: JSON.stringify({
+              type, date, category,
+              amount: Number(amount),
+              memo: memo.trim(),
+            }),
+          });
+          onAdd(created);
+          // 폼 리셋 (date / type 은 유지)
+          setCategory('');
+          setAmount('');
+          setMemo('');
+          setErrors({});
+        } catch (err) {
+          setServerError(err.message || '등록에 실패했어요');
+        } finally {
+          setSubmitting(false);
+        }
+      };
+
+      return (
+        <Card className="mb-6">
+          <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+            ✏️ <span>새 내역 등록</span>
+          </h2>
+
+          {/* 타입 토글 */}
+          <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 rounded-xl mb-4">
+            <button
+              type="button"
+              onClick={() => setType('expense')}
+              className={`py-2 rounded-lg text-sm font-semibold transition ${
+                type === 'expense'
+                  ? 'bg-white text-rose-600 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              💸 지출
+            </button>
+            <button
+              type="button"
+              onClick={() => setType('income')}
+              className={`py-2 rounded-lg text-sm font-semibold transition ${
+                type === 'income'
+                  ? 'bg-white text-emerald-600 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              💵 수입
+            </button>
+          </div>
+
+          <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <Input
+              type="date"
+              label="날짜"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              error={errors.date}
+            />
+            <Select
+              label="카테고리"
+              options={categoryOptions}
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              placeholder="선택하세요"
+              error={errors.category}
+            />
+            <Input
+              type="text"
+              label="금액"
+              value={displayAmount}
+              onChange={handleAmountChange}
+              placeholder="예: 12,000"
+              inputMode="numeric"
+              error={errors.amount}
+            />
+            <Input
+              type="text"
+              label="메모 (선택)"
+              value={memo}
+              onChange={(e) => setMemo(e.target.value)}
+              placeholder="간단한 설명"
+            />
+            <div className="sm:col-span-2 lg:col-span-4 flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2 pt-1">
+              {serverError && (
+                <p className="text-sm text-rose-500 sm:mr-auto" role="alert">⚠️ {serverError}</p>
+              )}
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={submitting}
+                  onClick={() => { setCategory(''); setAmount(''); setMemo(''); setErrors({}); setServerError(''); }}
+                >
+                  초기화
+                </Button>
+                <Button type="submit" variant="primary" size="lg" disabled={submitting}>
+                  {submitting ? '등록 중...' : '등록하기'}
+                </Button>
+              </div>
+            </div>
+          </form>
+        </Card>
+      );
+    }
+
+    // ========================================
+    // 📄 지출 도넛 차트 (Chart.js)
+    // ========================================
+    function ExpenseDonutChart({ transactions, monthFilter }) {
+      const canvasRef = useRef(null);
+      const chartRef = useRef(null);
+
+      // 지출만 카테고리별로 집계
+      const stats = useMemo(() => {
+        const expenses = transactions.filter((t) => t.type === 'expense');
+        const total = expenses.reduce((s, t) => s + Number(t.amount), 0);
+        const map = new Map();
+        for (const t of expenses) {
+          const cur = map.get(t.category) || { sum: 0, count: 0, color: t.color, icon: t.icon };
+          cur.sum += Number(t.amount);
+          cur.count += 1;
+          map.set(t.category, cur);
+        }
+        const rows = Array.from(map.entries())
+          .map(([category, v]) => ({ category, ...v }))
+          .sort((a, b) => b.sum - a.sum);
+        return { rows, total };
+      }, [transactions]);
+
+      // Chart.js 인스턴스 생성/갱신
+      useEffect(() => {
+        if (!canvasRef.current) return;
+        if (chartRef.current) {
+          chartRef.current.destroy();
+          chartRef.current = null;
+        }
+        if (stats.rows.length === 0) return;
+
+        const ctx = canvasRef.current.getContext('2d');
+        chartRef.current = new Chart(ctx, {
+          type: 'doughnut',
+          data: {
+            labels: stats.rows.map((r) => `${r.icon || ''} ${r.category}`.trim()),
+            datasets: [{
+              data: stats.rows.map((r) => r.sum),
+              backgroundColor: stats.rows.map((r) => colorHexFor(r.color)),
+              borderWidth: 2,
+              borderColor: '#ffffff',
+              hoverOffset: 10,
+            }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '65%',
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  label: (c) => {
+                    const v = c.parsed;
+                    const ratio = stats.total > 0 ? ((v / stats.total) * 100).toFixed(1) : '0';
+                    return ` ${formatKRW(v)} (${ratio}%)`;
+                  },
+                },
+                padding: 10,
+                titleFont: { size: 13, weight: 'bold' },
+                bodyFont: { size: 13 },
+              },
+            },
+            animation: { animateRotate: true, duration: 600 },
+          },
+        });
+
+        return () => {
+          if (chartRef.current) {
+            chartRef.current.destroy();
+            chartRef.current = null;
+          }
+        };
+      }, [stats]);
+
+      const monthLabel = monthFilter === 'all' ? '전체 기간' : monthFilter;
+
+      return (
+        <Card className="mb-6">
+          <div className="flex items-baseline justify-between mb-4">
+            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+              🍩 <span>지출 카테고리 비중</span>
+            </h2>
+            <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-2 py-1 rounded-full">
+              {monthLabel}
+            </span>
+          </div>
+
+          {stats.rows.length === 0 ? (
+            <p className="text-sm text-slate-400 py-12 text-center">
+              📭 표시할 지출 내역이 없어요
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
+              {/* 도넛 차트 + 중앙 총액 */}
+              <div className="relative h-64 md:h-72">
+                <canvas ref={canvasRef} />
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                  <span className="text-xs text-slate-400 font-medium">총 지출</span>
+                  <span className="text-xl md:text-2xl font-bold text-rose-600 mt-1">
+                    {formatKRW(stats.total)}
+                  </span>
+                  <span className="text-xs text-slate-400 mt-1">{stats.rows.length}개 카테고리</span>
+                </div>
+              </div>
+
+              {/* 커스텀 범례 (TOP 카테고리 + 비중) */}
+              <ul className="space-y-2 max-h-72 overflow-y-auto nice-scroll pr-2">
+                {stats.rows.map((r) => {
+                  const ratio = stats.total > 0 ? (r.sum / stats.total) * 100 : 0;
+                  return (
+                    <li
+                      key={r.category}
+                      className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50 transition-colors"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span
+                          className="w-3 h-3 rounded-full flex-shrink-0 ring-2 ring-white"
+                          style={{ backgroundColor: colorHexFor(r.color) }}
+                        />
+                        <span className="text-sm font-medium text-slate-700 truncate">
+                          {r.icon} {r.category}
+                        </span>
+                        <span className="text-xs text-slate-400 flex-shrink-0">{r.count}건</span>
+                      </div>
+                      <div className="flex items-center gap-3 flex-shrink-0">
+                        <span className="text-sm font-semibold text-slate-700 tabular-nums">
+                          {formatKRW(r.sum)}
+                        </span>
+                        <span className="text-xs font-bold text-slate-500 w-12 text-right tabular-nums">
+                          {ratio.toFixed(1)}%
+                        </span>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+        </Card>
+      );
+    }
+
+    // ========================================
+    // 📄 카테고리별 합계 (수입/지출 각각)
+    // ========================================
+    function CategoryBreakdown({ transactions }) {
+      const groups = useMemo(() => {
+        const make = (type) => {
+          const items = transactions.filter((t) => t.type === type);
+          const total = items.reduce((s, t) => s + Number(t.amount), 0);
+          const map = new Map();
+          for (const t of items) {
+            const cur = map.get(t.category) || { sum: 0, count: 0, color: t.color, icon: t.icon };
+            cur.sum += Number(t.amount);
+            cur.count += 1;
+            map.set(t.category, cur);
+          }
+          const rows = Array.from(map.entries())
+            .map(([category, v]) => ({
+              category,
+              sum: v.sum,
+              count: v.count,
+              color: v.color,
+              icon: v.icon,
+              ratio: total > 0 ? (v.sum / total) * 100 : 0,
+            }))
+            .sort((a, b) => b.sum - a.sum);
+          return { rows, total };
+        };
+        return {
+          income:  make('income'),
+          expense: make('expense'),
+        };
+      }, [transactions]);
+
+      const Block = ({ title, colorBar, group, type, emptyText, totalTheme }) => (
+        <div>
+          <div className="flex items-baseline justify-between mb-3">
+            <h3 className="font-bold text-slate-800">{title}</h3>
+            <span className={`text-sm font-semibold ${totalTheme}`}>{formatKRW(group.total)}</span>
+          </div>
+          {group.rows.length === 0 ? (
+            <p className="text-sm text-slate-400 py-6 text-center">{emptyText}</p>
+          ) : (
+            <ul className="space-y-3">
+              {group.rows.map((r) => (
+                <li key={r.category}>
+                  <div className="flex items-center justify-between text-sm mb-1">
+                    <div className="flex items-center gap-2">
+                      <Badge category={r.category} type={type} color={r.color} icon={r.icon} />
+                      <span className="text-slate-400 text-xs">{r.count}건</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-slate-700">{formatKRW(r.sum)}</span>
+                      <span className="text-xs text-slate-400 w-10 text-right">{r.ratio.toFixed(0)}%</span>
+                    </div>
+                  </div>
+                  <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full ${colorBar} rounded-full transition-all duration-500`}
+                      style={{ width: `${Math.max(r.ratio, 2)}%` }}
+                    />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      );
+
+      return (
+        <Card className="mb-6">
+          <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+            📊 <span>카테고리별 합계</span>
+          </h2>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-10">
+            <Block
+              title="수입"
+              colorBar={BAR_GRADIENT.income}
+              group={groups.income}
+              type="income"
+              emptyText="아직 수입 내역이 없어요"
+              totalTheme="text-emerald-600"
+            />
+            <Block
+              title="지출"
+              colorBar={BAR_GRADIENT.expense}
+              group={groups.expense}
+              type="expense"
+              emptyText="아직 지출 내역이 없어요"
+              totalTheme="text-rose-600"
+            />
+          </div>
+        </Card>
+      );
+    }
+
+    // ========================================
+    // 📄 월 필터 + 내역 리스트
+    // ========================================
+    function TransactionList({ transactions, allTransactions, monthFilter, onMonthChange, onDelete }) {
+      // 필터에 사용할 월 옵션 (전체 데이터 기준 - 비어가는 걸 방지)
+      const monthOptions = useMemo(() => {
+        const set = new Set(allTransactions.map((t) => monthOf(t.date)));
+        const sorted = Array.from(set).sort().reverse();
+        return [{ value: 'all', label: '전체' }, ...sorted.map((m) => ({ value: m, label: dayjs(m + '-01').format('YYYY년 M월') }))];
+      }, [allTransactions]);
+
+      // 최근 날짜 순 + 최대 20건
+      const visible = useMemo(() => {
+        return [...transactions]
+          .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.id - a.id))
+          .slice(0, 20);
+      }, [transactions]);
+
+      return (
+        <Card>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+              📒 <span>내역</span>
+              <span className="text-sm font-medium text-slate-400">({transactions.length}건)</span>
+            </h2>
+            <Select
+              options={monthOptions}
+              value={monthFilter}
+              onChange={(e) => onMonthChange(e.target.value)}
+              className="sm:w-48"
+            />
+          </div>
+
+          {visible.length === 0 ? (
+            <div className="py-14 text-center">
+              <div className="text-5xl mb-3">📭</div>
+              <p className="text-slate-500 font-medium">아직 등록된 내역이 없어요</p>
+              <p className="text-slate-400 text-sm mt-1">위에서 첫 내역을 추가해 보세요</p>
+            </div>
+          ) : (
+            <ul className="divide-y divide-slate-100 -mx-2 nice-scroll max-h-[640px] overflow-y-auto">
+              {visible.map((t) => (
+                <li key={t.id} className="px-2 py-3 flex items-center gap-3 fade-in-up hover:bg-slate-50 rounded-lg transition">
+                  <div className="w-14 shrink-0 text-center">
+                    <div className="text-xs text-slate-400">{dayjs(t.date).format('M월')}</div>
+                    <div className="text-lg font-bold text-slate-700 leading-tight">{dayjs(t.date).format('D')}</div>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge category={t.category} type={t.type} color={t.color} icon={t.icon} />
+                      {t.memo && <span className="text-sm text-slate-600 truncate">{t.memo}</span>}
+                    </div>
+                    <div className="text-xs text-slate-400 mt-0.5">{dayjs(t.date).format('YYYY년 M월 D일 (ddd)')}</div>
+                  </div>
+                  <div className={`text-right font-bold tabular-nums whitespace-nowrap ${
+                    t.type === 'income' ? 'text-emerald-600' : 'text-rose-600'
+                  }`}>
+                    {formatKRWSigned(t.type, t.amount)}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onDelete(t.id)}
+                    className="ml-1 w-8 h-8 rounded-full text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition flex items-center justify-center"
+                    aria-label="삭제"
+                    title="삭제"
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {transactions.length > 20 && (
+            <p className="text-xs text-slate-400 mt-3 text-center">
+              상위 20건만 표시됩니다 · 전체 {transactions.length}건
+            </p>
+          )}
+        </Card>
+      );
+    }
+
+    // ========================================
+    // 🚀 App Root
+    // ========================================
+    function App() {
+      const { transactions: initialTx, categories, loading, error } = useInitialFetch();
+      const [transactions, setTransactions] = useState([]);
+      const [monthFilter, setMonthFilter] = useState('all'); // 'all' | 'YYYY-MM'
+      const [deleteError, setDeleteError] = useState('');
+
+      // 초기 데이터 로드 완료되면 state 로 옮기기
+      useEffect(() => {
+        if (initialTx) setTransactions(initialTx);
+      }, [initialTx]);
+
+      // 처음 진입 시 기본 필터: 가장 최신 월 (데이터가 있다면)
+      useEffect(() => {
+        if (initialTx && initialTx.length > 0 && monthFilter === 'all') {
+          const latest = [...initialTx].sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+          if (latest) setMonthFilter(monthOf(latest.date));
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [initialTx]);
+
+      // POST 성공 후 서버가 반환한 row를 그대로 state에 push (낙관적-비슷한 UX)
+      const handleAdd = useCallback((tx) => {
+        setTransactions((prev) => [tx, ...prev]);
+        // 새 내역의 월로 필터를 맞춰 줘서 등록한게 즉시 보이도록 UX 배려
+        setMonthFilter(monthOf(tx.date));
+      }, []);
+
+      // DELETE /api/transactions/:id  → 성공 시 state에서 제거
+      const handleDelete = useCallback(async (id) => {
+        if (!window.confirm('이 내역을 삭제할까요?')) return;
+        setDeleteError('');
+        try {
+          await apiFetch(`/transactions/${id}`, { method: 'DELETE' });
+          setTransactions((prev) => prev.filter((t) => t.id !== id));
+        } catch (err) {
+          setDeleteError(err.message || '삭제에 실패했어요');
+        }
+      }, []);
+
+      // 월 필터 적용
+      const filtered = useMemo(() => {
+        if (monthFilter === 'all') return transactions;
+        return transactions.filter((t) => monthOf(t.date) === monthFilter);
+      }, [transactions, monthFilter]);
+
+      // 요약 (필터된 범위 기준)
+      // TODO: 데이터가 커지면 GET /api/transactions/summary 로 서버 집계 사용
+      const totals = useMemo(() => {
+        let income = 0, expense = 0;
+        for (const t of filtered) {
+          const n = Number(t.amount);
+          if (t.type === 'income') income += n;
+          else expense += n;
+        }
+        return { income, expense };
+      }, [filtered]);
+
+      // 로딩 / 에러 처리
+      if (loading) {
+        return (
+          <div className="max-w-5xl mx-auto p-4 sm:p-6 lg:p-8">
+            <Header />
+            <Card>
+              <div className="py-16 text-center">
+                <div className="inline-block w-10 h-10 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin"></div>
+                <p className="mt-4 text-slate-500">데이터를 불러오는 중...</p>
+              </div>
+            </Card>
+          </div>
+        );
+      }
+      if (error) {
+        return (
+          <div className="max-w-5xl mx-auto p-4 sm:p-6 lg:p-8">
+            <Header />
+            <Card>
+              <div className="py-12 text-center">
+                <div className="text-4xl mb-3">⚠️</div>
+                <p className="text-rose-500 font-medium">데이터를 불러오지 못했어요</p>
+                <p className="text-sm text-slate-400 mt-1">{String(error)}</p>
+              </div>
+            </Card>
+          </div>
+        );
+      }
+
+      return (
+        <div className="max-w-5xl mx-auto p-4 sm:p-6 lg:p-8">
+          <Header />
+
+          <SummarySection income={totals.income} expense={totals.expense} />
+
+          <TransactionForm onAdd={handleAdd} categories={categories || []} />
+
+          {deleteError && (
+            <div className="mb-4 p-3 rounded-xl bg-rose-50 ring-1 ring-rose-100 text-sm text-rose-600">
+              ⚠️ {deleteError}
+            </div>
+          )}
+
+          <ExpenseDonutChart transactions={filtered} monthFilter={monthFilter} />
+
+          <CategoryBreakdown transactions={filtered} />
+
+          <TransactionList
+            transactions={filtered}
+            allTransactions={transactions}
+            monthFilter={monthFilter}
+            onMonthChange={setMonthFilter}
+            onDelete={handleDelete}
+          />
+
+          <footer className="mt-10 text-center text-xs text-slate-400">
+            <p>데이터는 Supabase Postgres에 저장됩니다 · <code className="px-1 py-0.5 bg-slate-100 rounded">/api/transactions</code></p>
+          </footer>
+        </div>
+      );
+    }
+
+    // ========================================
+    // ▶️ Render
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+
+  <!--
+  ============================================================
+  📌 실행 방법
+  ============================================================
+  - 프로젝트 루트에서:  npm install  &&  npm start
+  - http://localhost:3000  접속  (server.js 가 index.html 정적 서빙)
+
+  ============================================================
+  📡 API 엔드포인트 (server.js)
+  ============================================================
+  GET    /api/categories                     → categories 전체 목록
+  GET    /api/transactions[?month=YYYY-MM]   → 거래 내역 (조인)
+  GET    /api/transactions/summary[?month=]  → v_category_summary 집계
+  POST   /api/transactions                   → 새 거래 등록
+                body: { type, category(name), amount, memo, date }
+  DELETE /api/transactions/:id               → 거래 삭제
+
+  공통 응답:    { success: true,  data: ... }
+  공통 에러:    { success: false, message: '...' }
+
+  Transaction 스키마(서버 반환):
+    { id, type, category, amount, memo, date,
+      color, icon, category_id, created_at }
+  ============================================================
+  -->
+</body>
+</html>

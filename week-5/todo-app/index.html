@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Todo App</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    body { font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+    .line-through { text-decoration: line-through; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .animate-spin { animation: spin 1s linear infinite; }
+    @keyframes fade-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+    .animate-fade-in { animation: fade-in 0.2s ease-out; }
+  </style>
+</head>
+<body class="bg-white text-gray-900">
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } = React;
+
+    // ========================================
+    // API Configuration
+    // ========================================
+    const API_BASE_URL = '/api';
+    const TOKEN_KEY = 'todo-app-token';
+
+    function getToken() {
+      return localStorage.getItem(TOKEN_KEY);
+    }
+
+    function setToken(token) {
+      localStorage.setItem(TOKEN_KEY, token);
+    }
+
+    function removeToken() {
+      localStorage.removeItem(TOKEN_KEY);
+    }
+
+    // Global logout handler - set by AuthProvider
+    let globalLogout = () => {};
+
+    async function apiFetch(endpoint, options = {}) {
+      const token = getToken();
+      const headers = {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+        ...options,
+        headers,
+      });
+
+      // 401 -> auto logout
+      if (res.status === 401) {
+        removeToken();
+        globalLogout();
+        throw new Error('인증이 만료되었습니다. 다시 로그인해주세요.');
+      }
+
+      const json = await res.json();
+      if (!json.success) {
+        throw new Error(json.message || '요청에 실패했습니다');
+      }
+      return json.data;
+    }
+
+    // ========================================
+    // Auth Context
+    // ========================================
+    const AuthContext = createContext(null);
+
+    function useAuth() {
+      return useContext(AuthContext);
+    }
+
+    function AuthProvider({ children }) {
+      const [user, setUser] = useState(null);
+      const [authLoading, setAuthLoading] = useState(true);
+
+      useEffect(() => {
+        const token = getToken();
+        if (token) {
+          // Decode user info from JWT payload (base64)
+          try {
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            setUser({ id: payload.id || payload.sub, email: payload.email });
+          } catch {
+            // Invalid token
+            removeToken();
+          }
+        }
+        setAuthLoading(false);
+      }, []);
+
+      const login = useCallback((token, userData) => {
+        setToken(token);
+        setUser(userData);
+      }, []);
+
+      const logout = useCallback(() => {
+        removeToken();
+        setUser(null);
+      }, []);
+
+      // Register global logout so apiFetch can trigger it
+      useEffect(() => {
+        globalLogout = logout;
+        return () => { globalLogout = () => {}; };
+      }, [logout]);
+
+      const value = useMemo(() => ({
+        user, authLoading, login, logout, isAuthenticated: !!user,
+      }), [user, authLoading, login, logout]);
+
+      return (
+        <AuthContext.Provider value={value}>
+          {children}
+        </AuthContext.Provider>
+      );
+    }
+
+    // ========================================
+    // Constants
+    // ========================================
+    const FILTER = { ALL: 'all', ACTIVE: 'active', DONE: 'done' };
+
+    const PRIORITY_CONFIG = {
+      high:   { label: '높음', bg: 'bg-red-100',    text: 'text-red-700',    dot: 'bg-red-500' },
+      medium: { label: '보통', bg: 'bg-yellow-100', text: 'text-yellow-700', dot: 'bg-yellow-500' },
+      low:    { label: '낮음', bg: 'bg-green-100',  text: 'text-green-700',  dot: 'bg-green-500' },
+    };
+
+    // ========================================
+    // Design System Components
+    // ========================================
+
+    function Spinner({ size = 'md' }) {
+      const sizeClass = size === 'sm' ? 'w-4 h-4' : size === 'lg' ? 'w-8 h-8' : 'w-6 h-6';
+      return (
+        <svg className={`${sizeClass} animate-spin text-gray-400`} fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+      );
+    }
+
+    function Toast({ message, type = 'error', onClose }) {
+      useEffect(() => {
+        const timer = setTimeout(onClose, 4000);
+        return () => clearTimeout(timer);
+      }, [onClose]);
+
+      const colors = type === 'error'
+        ? 'bg-red-50 border-red-200 text-red-700'
+        : 'bg-green-50 border-green-200 text-green-700';
+
+      return (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg border shadow-lg text-sm animate-fade-in ${colors}`}>
+          <div className="flex items-center gap-2">
+            <span>{message}</span>
+            <button onClick={onClose} className="ml-2 opacity-50 hover:opacity-100">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    function PriorityBadge({ priority }) {
+      const config = PRIORITY_CONFIG[priority];
+      if (!config) return null;
+      return (
+        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${config.bg} ${config.text}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${config.dot}`} />
+          {config.label}
+        </span>
+      );
+    }
+
+    function CategoryBadge({ category }) {
+      if (!category || !category.name) return null;
+      const color = category.color || '#6b7280';
+      return (
+        <span
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium"
+          style={{ backgroundColor: `${color}20`, color: color }}
+        >
+          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: color }} />
+          {category.name}
+        </span>
+      );
+    }
+
+    // ========================================
+    // AuthPage Component
+    // ========================================
+    function AuthPage() {
+      const { login } = useAuth();
+      const [tab, setTab] = useState('login'); // 'login' | 'register'
+      const [email, setEmail] = useState('');
+      const [password, setPassword] = useState('');
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+
+      const emailRef = useRef(null);
+
+      useEffect(() => {
+        emailRef.current?.focus();
+      }, [tab]);
+
+      const validate = () => {
+        if (!email.trim()) {
+          setError('이메일을 입력해주세요.');
+          return false;
+        }
+        if (!/\S+@\S+\.\S+/.test(email)) {
+          setError('올바른 이메일 형식을 입력해주세요.');
+          return false;
+        }
+        if (password.length < 6) {
+          setError('비밀번호는 최소 6자 이상이어야 합니다.');
+          return false;
+        }
+        return true;
+      };
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        setError('');
+        if (!validate()) return;
+
+        setLoading(true);
+        try {
+          const endpoint = tab === 'login' ? '/auth/login' : '/auth/register';
+          const data = await apiFetch(endpoint, {
+            method: 'POST',
+            body: JSON.stringify({ email: email.trim(), password }),
+          });
+          login(data.token, data.user);
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const switchTab = (newTab) => {
+        setTab(newTab);
+        setError('');
+        setEmail('');
+        setPassword('');
+      };
+
+      return (
+        <div className="min-h-screen flex items-center justify-center px-4">
+          <div className="w-full max-w-sm">
+            {/* Title */}
+            <h1 className="text-3xl font-light tracking-tight text-center mb-8 text-gray-800">
+              todos
+            </h1>
+
+            {/* Card */}
+            <div className="border border-gray-200 rounded-xl p-6">
+              {/* Tabs */}
+              <div className="flex mb-6 border-b border-gray-100">
+                <button
+                  onClick={() => switchTab('login')}
+                  className={`flex-1 pb-3 text-sm font-medium transition-colors border-b-2 ${
+                    tab === 'login'
+                      ? 'border-gray-900 text-gray-900'
+                      : 'border-transparent text-gray-400 hover:text-gray-600'
+                  }`}
+                >
+                  로그인
+                </button>
+                <button
+                  onClick={() => switchTab('register')}
+                  className={`flex-1 pb-3 text-sm font-medium transition-colors border-b-2 ${
+                    tab === 'register'
+                      ? 'border-gray-900 text-gray-900'
+                      : 'border-transparent text-gray-400 hover:text-gray-600'
+                  }`}
+                >
+                  회원가입
+                </button>
+              </div>
+
+              {/* Form */}
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                  <label htmlFor="auth-email" className="block text-xs font-medium text-gray-500 mb-1.5">
+                    이메일
+                  </label>
+                  <input
+                    ref={emailRef}
+                    id="auth-email"
+                    type="email"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    className="w-full px-4 py-3 border border-gray-200 rounded-lg text-sm
+                               focus:outline-none focus:border-gray-400 transition-colors
+                               placeholder:text-gray-300"
+                    disabled={loading}
+                    autoComplete="email"
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="auth-password" className="block text-xs font-medium text-gray-500 mb-1.5">
+                    비밀번호
+                  </label>
+                  <input
+                    id="auth-password"
+                    type="password"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    placeholder="6자 이상"
+                    className="w-full px-4 py-3 border border-gray-200 rounded-lg text-sm
+                               focus:outline-none focus:border-gray-400 transition-colors
+                               placeholder:text-gray-300"
+                    disabled={loading}
+                    autoComplete={tab === 'login' ? 'current-password' : 'new-password'}
+                  />
+                </div>
+
+                {/* Error */}
+                {error && (
+                  <p className="text-sm text-red-600 animate-fade-in">{error}</p>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-3 bg-gray-900 text-white text-sm rounded-lg
+                             hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed
+                             transition-colors flex items-center justify-center gap-2"
+                >
+                  {loading && <Spinner size="sm" />}
+                  {tab === 'login' ? '로그인' : '회원가입'}
+                </button>
+              </form>
+            </div>
+
+            <p className="text-center text-xs text-gray-300 mt-6">
+              {tab === 'login'
+                ? '계정이 없으신가요? 위에서 회원가입 탭을 눌러주세요.'
+                : '이미 계정이 있으신가요? 위에서 로그인 탭을 눌러주세요.'}
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // TodoApp Component (authenticated)
+    // ========================================
+    function TodoApp() {
+      const { user, logout } = useAuth();
+
+      const [todos, setTodos] = useState([]);
+      const [categories, setCategories] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [submitting, setSubmitting] = useState(false);
+      const [toast, setToast] = useState(null);
+
+      // Form state
+      const [input, setInput] = useState('');
+      const [priority, setPriority] = useState('medium');
+      const [categoryId, setCategoryId] = useState('');
+      const [dueDate, setDueDate] = useState('');
+      const [showOptions, setShowOptions] = useState(false);
+
+      // Filter state
+      const [filter, setFilter] = useState(FILTER.ALL);
+      const [categoryFilter, setCategoryFilter] = useState('all');
+
+      const inputRef = useRef(null);
+
+      const showError = useCallback((msg) => setToast({ message: msg, type: 'error' }), []);
+      const showSuccess = useCallback((msg) => setToast({ message: msg, type: 'success' }), []);
+
+      // -- Initial Load --
+      useEffect(() => {
+        async function load() {
+          try {
+            const [todosData, catsData] = await Promise.all([
+              apiFetch('/todos'),
+              apiFetch('/categories'),
+            ]);
+            setTodos(todosData);
+            setCategories(catsData);
+          } catch (err) {
+            showError('데이터를 불러오지 못했습니다: ' + err.message);
+          } finally {
+            setLoading(false);
+          }
+        }
+        load();
+      }, [showError]);
+
+      // -- Actions --
+      const addTodo = useCallback(async () => {
+        const title = input.trim();
+        if (!title) return;
+        setSubmitting(true);
+        try {
+          const newTodo = await apiFetch('/todos', {
+            method: 'POST',
+            body: JSON.stringify({
+              title,
+              priority,
+              category_id: categoryId || null,
+              due_date: dueDate || null,
+            }),
+          });
+          setTodos(prev => [newTodo, ...prev]);
+          setInput('');
+          setPriority('medium');
+          setCategoryId('');
+          setDueDate('');
+          setShowOptions(false);
+          inputRef.current?.focus();
+        } catch (err) {
+          showError('추가 실패: ' + err.message);
+        } finally {
+          setSubmitting(false);
+        }
+      }, [input, priority, categoryId, dueDate, showError]);
+
+      const toggleTodo = useCallback(async (id, currentCompleted) => {
+        setTodos(prev => prev.map(t => t.id === id ? { ...t, completed: !currentCompleted } : t));
+        try {
+          const updated = await apiFetch(`/todos/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ completed: !currentCompleted }),
+          });
+          setTodos(prev => prev.map(t => t.id === id ? updated : t));
+        } catch (err) {
+          setTodos(prev => prev.map(t => t.id === id ? { ...t, completed: currentCompleted } : t));
+          showError('상태 변경 실패: ' + err.message);
+        }
+      }, [showError]);
+
+      const deleteTodo = useCallback(async (id) => {
+        const original = todos.find(t => t.id === id);
+        setTodos(prev => prev.filter(t => t.id !== id));
+        try {
+          await apiFetch(`/todos/${id}`, { method: 'DELETE' });
+        } catch (err) {
+          if (original) setTodos(prev => [...prev, original].sort((a, b) => b.id - a.id));
+          showError('삭제 실패: ' + err.message);
+        }
+      }, [todos, showError]);
+
+      const handleKeyDown = useCallback((e) => {
+        if (e.key === 'Enter' && !submitting) addTodo();
+      }, [addTodo, submitting]);
+
+      // -- Derived --
+      const filtered = useMemo(() => {
+        let result = todos;
+        if (filter === FILTER.ACTIVE) result = result.filter(t => !t.completed);
+        if (filter === FILTER.DONE) result = result.filter(t => t.completed);
+        if (categoryFilter !== 'all') {
+          result = result.filter(t => String(t.category_id) === categoryFilter);
+        }
+        return result;
+      }, [todos, filter, categoryFilter]);
+
+      const remaining = useMemo(() => todos.filter(t => !t.completed).length, [todos]);
+
+      const filterBtn = (type, label) => (
+        <button
+          onClick={() => setFilter(type)}
+          className={`px-3 py-1 text-sm rounded transition-colors ${
+            filter === type
+              ? 'bg-gray-900 text-white'
+              : 'text-gray-500 hover:text-gray-900'
+          }`}
+          aria-pressed={filter === type}
+        >
+          {label}
+        </button>
+      );
+
+      // -- Loading State --
+      if (loading) {
+        return (
+          <div className="min-h-screen flex items-center justify-center">
+            <div className="flex flex-col items-center gap-3">
+              <Spinner size="lg" />
+              <span className="text-sm text-gray-400">불러오는 중...</span>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="min-h-screen flex flex-col">
+          {/* Toast */}
+          {toast && (
+            <Toast
+              message={toast.message}
+              type={toast.type}
+              onClose={() => setToast(null)}
+            />
+          )}
+
+          {/* Top Bar */}
+          <header className="flex items-center justify-between px-4 sm:px-6 py-3 border-b border-gray-100">
+            <span className="text-xs text-gray-400 truncate max-w-[200px]" title={user?.email}>
+              {user?.email}
+            </span>
+            <button
+              onClick={logout}
+              className="text-xs text-gray-400 hover:text-gray-600 transition-colors px-2 py-1 rounded hover:bg-gray-50"
+            >
+              로그아웃
+            </button>
+          </header>
+
+          <div className="flex-1 flex items-start justify-center pt-8 sm:pt-20 px-4">
+            <div className="w-full max-w-lg">
+              {/* Header */}
+              <h1 className="text-3xl font-light tracking-tight text-center mb-8 text-gray-800">
+                todos
+              </h1>
+
+              {/* Input */}
+              <div className="mb-6">
+                <div className="flex gap-2">
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={input}
+                    onChange={e => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="할 일을 입력하세요"
+                    className="flex-1 px-4 py-3 border border-gray-200 rounded-lg text-sm
+                               focus:outline-none focus:border-gray-400 transition-colors
+                               placeholder:text-gray-300"
+                    aria-label="새 할 일"
+                    disabled={submitting}
+                  />
+                  <button
+                    onClick={() => setShowOptions(prev => !prev)}
+                    className={`px-3 py-3 border rounded-lg text-sm transition-colors shrink-0 ${
+                      showOptions ? 'border-gray-400 text-gray-700' : 'border-gray-200 text-gray-400 hover:text-gray-600'
+                    }`}
+                    aria-label="옵션 토글"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round"
+                        d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={addTodo}
+                    disabled={!input.trim() || submitting}
+                    className="px-5 py-3 bg-gray-900 text-white text-sm rounded-lg
+                               hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed
+                               transition-colors shrink-0 flex items-center gap-2"
+                  >
+                    {submitting ? <Spinner size="sm" /> : null}
+                    추가
+                  </button>
+                </div>
+
+                {/* Options Row */}
+                {showOptions && (
+                  <div className="mt-3 flex flex-wrap gap-2 animate-fade-in">
+                    <select
+                      value={priority}
+                      onChange={e => setPriority(e.target.value)}
+                      className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white
+                                 focus:outline-none focus:border-gray-400"
+                      aria-label="우선순위"
+                    >
+                      <option value="high">높음</option>
+                      <option value="medium">보통</option>
+                      <option value="low">낮음</option>
+                    </select>
+
+                    <select
+                      value={categoryId}
+                      onChange={e => setCategoryId(e.target.value)}
+                      className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white
+                                 focus:outline-none focus:border-gray-400"
+                      aria-label="카테고리"
+                    >
+                      <option value="">카테고리 없음</option>
+                      {categories.map(cat => (
+                        <option key={cat.id} value={cat.id}>{cat.name}</option>
+                      ))}
+                    </select>
+
+                    <input
+                      type="date"
+                      value={dueDate}
+                      onChange={e => setDueDate(e.target.value)}
+                      className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white
+                                 focus:outline-none focus:border-gray-400"
+                      aria-label="마감일"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Filters */}
+              {todos.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2 mb-4">
+                  <div className="flex gap-1" role="group" aria-label="상태 필터">
+                    {filterBtn(FILTER.ALL, '전체')}
+                    {filterBtn(FILTER.ACTIVE, '미완료')}
+                    {filterBtn(FILTER.DONE, '완료')}
+                  </div>
+
+                  {categories.length > 0 && (
+                    <>
+                      <span className="text-gray-200">|</span>
+                      <select
+                        value={categoryFilter}
+                        onChange={e => setCategoryFilter(e.target.value)}
+                        className="px-2 py-1 text-sm border border-gray-200 rounded-lg bg-white
+                                   focus:outline-none focus:border-gray-400"
+                        aria-label="카테고리 필터"
+                      >
+                        <option value="all">모든 카테고리</option>
+                        {categories.map(cat => (
+                          <option key={cat.id} value={cat.id}>{cat.name}</option>
+                        ))}
+                      </select>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* List */}
+              <ul className="space-y-1">
+                {filtered.map(todo => (
+                  <li
+                    key={todo.id}
+                    className="group flex items-start gap-3 px-4 py-3 rounded-lg
+                               hover:bg-gray-50 transition-colors"
+                  >
+                    <button
+                      onClick={() => toggleTodo(todo.id, todo.completed)}
+                      className={`mt-0.5 w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center
+                                 transition-colors ${
+                                   todo.completed
+                                     ? 'bg-gray-900 border-gray-900'
+                                     : 'border-gray-300 hover:border-gray-500'
+                                 }`}
+                      aria-label={todo.completed ? '완료 취소' : '완료 처리'}
+                    >
+                      {todo.completed && (
+                        <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                    </button>
+
+                    <div className="flex-1 min-w-0">
+                      <span className={`text-sm transition-colors block ${
+                        todo.completed ? 'line-through text-gray-300' : 'text-gray-700'
+                      }`}>
+                        {todo.title}
+                      </span>
+
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                        <PriorityBadge priority={todo.priority} />
+                        <CategoryBadge category={todo.category} />
+                        {todo.due_date && (
+                          <span className="text-xs text-gray-400">
+                            {new Date(todo.due_date).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' })}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => deleteTodo(todo.id)}
+                      className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-gray-500
+                                 transition-opacity p-1 shrink-0"
+                      aria-label="삭제"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+
+              {/* Empty states */}
+              {todos.length === 0 && (
+                <p className="text-center text-gray-300 text-sm py-12">
+                  아직 할 일이 없습니다
+                </p>
+              )}
+
+              {filtered.length === 0 && todos.length > 0 && (
+                <p className="text-center text-gray-300 text-sm py-8">
+                  해당 항목이 없습니다
+                </p>
+              )}
+
+              {/* Footer */}
+              {todos.length > 0 && (
+                <div className="mt-6 pt-4 border-t border-gray-100 text-center">
+                  <span className="text-xs text-gray-400">
+                    남은 할 일 {remaining}개
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // App Component (Root)
+    // ========================================
+    function App() {
+      return (
+        <AuthProvider>
+          <AppRouter />
+        </AuthProvider>
+      );
+    }
+
+    function AppRouter() {
+      const { isAuthenticated, authLoading } = useAuth();
+
+      if (authLoading) {
+        return (
+          <div className="min-h-screen flex items-center justify-center">
+            <Spinner size="lg" />
+          </div>
+        );
+      }
+
+      return isAuthenticated ? <TodoApp /> : <AuthPage />;
+    }
+
+    // ========================================
+    // Render
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
