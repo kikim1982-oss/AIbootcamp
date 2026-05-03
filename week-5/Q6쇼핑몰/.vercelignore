@@ -1,0 +1,8 @@
+node_modules
+screenshots
+.env
+init-db.js
+db/schema.sql
+planning.md
+quest6.md
+README.md
