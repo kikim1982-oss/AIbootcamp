@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GlassMarket — 안경테 쇼핑몰</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    .card-lift {
+      transition: transform 0.25s ease, box-shadow 0.25s ease;
+    }
+    .card-lift:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 20px 40px -12px rgba(15, 23, 42, 0.25);
+    }
+    .chip-active {
+      box-shadow: 0 4px 12px -2px rgba(30, 41, 59, 0.4);
+    }
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-8px); }
+    }
+    .animate-float {
+      animation: float 3s ease-in-out infinite;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .animate-fadeIn { animation: fadeIn 0.18s ease-out; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div id="root"></div>
+  <script type="text/babel">
+    // ========================================
+    // React Hooks
+    // ========================================
+    const { useState, useEffect, useMemo, useCallback, createContext, useContext } = React;
+
+    // ========================================
+    // 상수 / 헬퍼
+    // ========================================
+    const API_BASE_URL = '/api';
+    const TOKEN_KEY = 'glassmarket.token';
+
+    const CATEGORIES = ["전체", "라운드", "미니멀", "스퀘어", "캣아이", "스포츠"];
+
+    const formatPrice = (n) => `₩${Number(n).toLocaleString("ko-KR")}`;
+
+    async function apiFetch(path, { method = 'GET', body, token, headers = {} } = {}) {
+      const res = await fetch(`${API_BASE_URL}${path}`, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...headers,
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const json = await res.json().catch(() => ({ success: false, message: '응답 파싱 실패' }));
+      if (!res.ok || !json.success) {
+        const msg = json.message || `요청 실패 (${res.status})`;
+        const err = new Error(msg);
+        err.status = res.status;
+        throw err;
+      }
+      return json.data;
+    }
+
+    // ========================================
+    // 🎨 Design System
+    // ========================================
+    function Button({ variant = "primary", size = "md", className = "", children, ...rest }) {
+      const base = "inline-flex items-center justify-center font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-400 disabled:opacity-50 disabled:cursor-not-allowed";
+      const sizes = {
+        sm: "px-3 py-1.5 text-sm",
+        md: "px-4 py-2 text-sm",
+        lg: "px-6 py-3 text-base",
+      };
+      const variants = {
+        primary: "bg-slate-900 text-white hover:bg-slate-800",
+        secondary: "bg-white text-slate-900 border border-slate-300 hover:bg-slate-100",
+        gold: "bg-amber-500 text-white hover:bg-amber-600",
+        ghost: "bg-transparent text-slate-700 hover:bg-slate-100",
+        danger: "bg-white text-rose-600 border border-rose-200 hover:bg-rose-50",
+      };
+      return (
+        <button className={`${base} ${sizes[size]} ${variants[variant]} ${className}`} {...rest}>
+          {children}
+        </button>
+      );
+    }
+
+    function Badge({ children, className = "" }) {
+      return (
+        <span className={`inline-block text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 ${className}`}>
+          {children}
+        </span>
+      );
+    }
+
+    function Card({ children, className = "" }) {
+      return (
+        <div className={`bg-white rounded-2xl shadow-sm border border-slate-100 ${className}`}>
+          {children}
+        </div>
+      );
+    }
+
+    function Chip({ active, children, onClick }) {
+      return (
+        <button
+          onClick={onClick}
+          className={`px-4 py-2 rounded-full text-sm font-medium transition-all whitespace-nowrap ${
+            active
+              ? "bg-slate-900 text-white chip-active"
+              : "bg-white text-slate-700 border border-slate-200 hover:border-slate-400"
+          }`}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    function QtyControl({ value, onDec, onInc, disabled }) {
+      return (
+        <div className="inline-flex items-center border border-slate-200 rounded-lg overflow-hidden">
+          <button
+            onClick={onDec}
+            aria-label="수량 감소"
+            disabled={disabled}
+            className="px-3 py-1.5 text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+          >
+            −
+          </button>
+          <span className="px-4 py-1.5 text-sm font-semibold min-w-[2.5rem] text-center">{value}</span>
+          <button
+            onClick={onInc}
+            aria-label="수량 증가"
+            disabled={disabled}
+            className="px-3 py-1.5 text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+          >
+            +
+          </button>
+        </div>
+      );
+    }
+
+    function Modal({ isOpen, onClose, title, children }) {
+      useEffect(() => {
+        if (!isOpen) return;
+        const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+        document.addEventListener('keydown', onKey);
+        const prev = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        return () => {
+          document.removeEventListener('keydown', onKey);
+          document.body.style.overflow = prev;
+        };
+      }, [isOpen, onClose]);
+
+      if (!isOpen) return null;
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm animate-fadeIn" role="dialog" aria-modal="true">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <h3 className="font-bold text-slate-900">{title}</h3>
+              <button onClick={onClose} aria-label="닫기" className="text-slate-400 hover:text-slate-700 text-xl leading-none">×</button>
+            </div>
+            <div className="px-5 py-5">{children}</div>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🔀 Hash Router
+    // ========================================
+    const RouterContext = createContext({ path: "/", navigate: () => {} });
+
+    function Router({ children }) {
+      const [path, setPath] = useState(() => window.location.hash.replace(/^#/, "") || "/");
+      useEffect(() => {
+        const onHashChange = () => setPath(window.location.hash.replace(/^#/, "") || "/");
+        window.addEventListener("hashchange", onHashChange);
+        if (!window.location.hash) window.location.hash = "/";
+        return () => window.removeEventListener("hashchange", onHashChange);
+      }, []);
+      const navigate = (to) => { window.location.hash = to; };
+      return (
+        <RouterContext.Provider value={{ path, navigate }}>
+          {children}
+        </RouterContext.Provider>
+      );
+    }
+    function useRouter() { return useContext(RouterContext); }
+
+    function Link({ to, children, className = "", onClick }) {
+      const { navigate } = useRouter();
+      return (
+        <a
+          href={`#${to}`}
+          onClick={(e) => { e.preventDefault(); navigate(to); if (onClick) onClick(); }}
+          className={className}
+        >
+          {children}
+        </a>
+      );
+    }
+
+    // ========================================
+    // 🔐 Auth Context (JWT)
+    // ========================================
+    const AuthContext = createContext(null);
+
+    function AuthProvider({ children }) {
+      const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY));
+      const [user, setUser] = useState(null);
+      const [loading, setLoading] = useState(!!token);
+
+      // 토큰이 있으면 /me 호출하여 사용자 정보 복원
+      useEffect(() => {
+        if (!token) { setUser(null); setLoading(false); return; }
+        let cancelled = false;
+        setLoading(true);
+        apiFetch('/auth/me', { token })
+          .then((u) => { if (!cancelled) setUser(u); })
+          .catch(() => {
+            if (!cancelled) {
+              localStorage.removeItem(TOKEN_KEY);
+              setToken(null);
+              setUser(null);
+            }
+          })
+          .finally(() => { if (!cancelled) setLoading(false); });
+        return () => { cancelled = true; };
+      }, [token]);
+
+      const login = useCallback(async (email, password) => {
+        const data = await apiFetch('/auth/login', { method: 'POST', body: { email, password } });
+        localStorage.setItem(TOKEN_KEY, data.token);
+        setToken(data.token);
+        setUser(data.user);
+        return data.user;
+      }, []);
+
+      const register = useCallback(async (email, password) => {
+        const data = await apiFetch('/auth/register', { method: 'POST', body: { email, password } });
+        localStorage.setItem(TOKEN_KEY, data.token);
+        setToken(data.token);
+        setUser(data.user);
+        return data.user;
+      }, []);
+
+      const logout = useCallback(() => {
+        localStorage.removeItem(TOKEN_KEY);
+        setToken(null);
+        setUser(null);
+      }, []);
+
+      const value = useMemo(() => ({ token, user, loading, login, register, logout }), [token, user, loading, login, register, logout]);
+      return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+    }
+    function useAuth() { return useContext(AuthContext); }
+
+    // ========================================
+    // 🛒 Cart Context (server-backed when logged in)
+    // ========================================
+    const CartContext = createContext(null);
+
+    function CartProvider({ children }) {
+      const { token, user } = useAuth();
+      const [items, setItems] = useState([]);  // {id, product_id, quantity, name, price, image_url, category, description}
+      const [loading, setLoading] = useState(false);
+
+      const refresh = useCallback(async () => {
+        if (!token) { setItems([]); return; }
+        setLoading(true);
+        try {
+          const data = await apiFetch('/cart', { token });
+          setItems(data);
+        } catch (err) {
+          console.error('cart refresh failed:', err.message);
+          setItems([]);
+        } finally {
+          setLoading(false);
+        }
+      }, [token]);
+
+      useEffect(() => { refresh(); }, [refresh, user]);
+
+      const add = useCallback(async (product_id) => {
+        if (!token) throw new Error('로그인이 필요합니다.');
+        await apiFetch('/cart', { method: 'POST', body: { product_id, quantity: 1 }, token });
+        await refresh();
+      }, [token, refresh]);
+
+      const updateQty = useCallback(async (cart_id, quantity) => {
+        if (!token) return;
+        if (quantity < 1) return;
+        // optimistic
+        setItems((prev) => prev.map((i) => (i.id === cart_id ? { ...i, quantity } : i)));
+        try {
+          await apiFetch(`/cart/${cart_id}`, { method: 'PATCH', body: { quantity }, token });
+        } catch (err) {
+          console.error('updateQty failed:', err.message);
+          await refresh();
+        }
+      }, [token, refresh]);
+
+      const remove = useCallback(async (cart_id) => {
+        if (!token) return;
+        const prev = items;
+        setItems((curr) => curr.filter((i) => i.id !== cart_id));
+        try {
+          await apiFetch(`/cart/${cart_id}`, { method: 'DELETE', token });
+        } catch (err) {
+          console.error('remove failed:', err.message);
+          setItems(prev);
+        }
+      }, [token, items]);
+
+      const count = useMemo(() => items.reduce((s, i) => s + i.quantity, 0), [items]);
+      const total = useMemo(() => items.reduce((s, i) => s + i.price * i.quantity, 0), [items]);
+
+      const value = useMemo(() => ({ items, loading, count, total, add, updateQty, remove, refresh }),
+        [items, loading, count, total, add, updateQty, remove, refresh]);
+      return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
+    }
+    function useCart() { return useContext(CartContext); }
+
+    // ========================================
+    // 🔐 Login / Signup Modal
+    // ========================================
+    function AuthModal({ mode, isOpen, onClose, onSwitchMode }) {
+      const { login, register } = useAuth();
+      const [email, setEmail] = useState('');
+      const [password, setPassword] = useState('');
+      const [error, setError] = useState('');
+      const [submitting, setSubmitting] = useState(false);
+
+      useEffect(() => {
+        if (isOpen) { setEmail(''); setPassword(''); setError(''); }
+      }, [isOpen, mode]);
+
+      const isSignup = mode === 'signup';
+      const title = isSignup ? '회원가입' : '로그인';
+      const cta = isSignup ? '가입하고 시작하기' : '로그인';
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        setError('');
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          setError('올바른 이메일 형식이 아닙니다.');
+          return;
+        }
+        if (!/^\d{6}$/.test(password)) {
+          setError('비밀번호는 숫자 6자리여야 합니다.');
+          return;
+        }
+        setSubmitting(true);
+        try {
+          if (isSignup) await register(email, password);
+          else await login(email, password);
+          onClose();
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setSubmitting(false);
+        }
+      };
+
+      return (
+        <Modal isOpen={isOpen} onClose={onClose} title={title}>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">이메일</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                autoComplete="email"
+                required
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">비밀번호 (숫자 6자리)</label>
+              <input
+                type="password"
+                inputMode="numeric"
+                pattern="\d{6}"
+                maxLength={6}
+                value={password}
+                onChange={(e) => setPassword(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="••••••"
+                autoComplete={isSignup ? 'new-password' : 'current-password'}
+                required
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm tracking-widest focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+              />
+              <p className="mt-1 text-xs text-slate-500">예: 123456 (숫자만)</p>
+            </div>
+
+            {error && (
+              <div className="text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
+                {error}
+              </div>
+            )}
+
+            <Button type="submit" variant="primary" size="lg" className="w-full" disabled={submitting}>
+              {submitting ? '처리 중…' : cta}
+            </Button>
+
+            <p className="text-center text-sm text-slate-500">
+              {isSignup ? '이미 계정이 있으신가요?' : '아직 계정이 없으신가요?'}{' '}
+              <button
+                type="button"
+                onClick={() => onSwitchMode(isSignup ? 'login' : 'signup')}
+                className="font-semibold text-amber-600 hover:text-amber-700"
+              >
+                {isSignup ? '로그인' : '회원가입'}
+              </button>
+            </p>
+          </form>
+        </Modal>
+      );
+    }
+
+    // ========================================
+    // 🧩 Header / Footer
+    // ========================================
+    function Header({ onOpenAuth }) {
+      const { user, logout } = useAuth();
+      const { count } = useCart();
+
+      return (
+        <header className="sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-slate-200">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+            <Link to="/" className="flex items-center gap-2 group">
+              <span className="text-2xl">👓</span>
+              <span className="text-lg sm:text-xl font-bold tracking-tight text-slate-900 group-hover:text-amber-600 transition-colors">
+                Glass<span className="text-amber-500">Market</span>
+              </span>
+            </Link>
+
+            <nav className="flex items-center gap-2 sm:gap-3">
+              {user ? (
+                <>
+                  <span className="hidden sm:inline text-xs sm:text-sm text-slate-500 max-w-[160px] truncate" title={user.email}>
+                    {user.email}
+                  </span>
+                  <button
+                    onClick={logout}
+                    className="text-sm text-slate-600 hover:text-slate-900 font-medium px-2 sm:px-3 py-1.5"
+                  >
+                    로그아웃
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => onOpenAuth('login')}
+                    className="text-sm text-slate-600 hover:text-slate-900 font-medium px-2 sm:px-3 py-1.5"
+                  >
+                    로그인
+                  </button>
+                  <button
+                    onClick={() => onOpenAuth('signup')}
+                    className="hidden sm:inline-flex text-sm text-slate-600 hover:text-slate-900 font-medium px-3 py-1.5"
+                  >
+                    회원가입
+                  </button>
+                </>
+              )}
+
+              <Link
+                to="/cart"
+                className="relative inline-flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors"
+              >
+                <span>🛒</span>
+                <span className="hidden sm:inline">장바구니</span>
+                <span className="inline-flex items-center justify-center min-w-[1.5rem] h-6 px-1.5 rounded-full bg-amber-500 text-white text-xs font-bold">
+                  {count}
+                </span>
+              </Link>
+            </nav>
+          </div>
+        </header>
+      );
+    }
+
+    function Footer() {
+      return (
+        <footer className="mt-16 border-t border-slate-200 bg-white">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 text-sm text-slate-500 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
+            <p>© 2026 GlassMarket. 모든 안경테는 최고 품질입니다.</p>
+            <p className="text-xs">데모 페이지 · 학습용 프로젝트</p>
+          </div>
+        </footer>
+      );
+    }
+
+    // ========================================
+    // 📄 ProductCard
+    // ========================================
+    function ProductCard({ product, onAdd, adding }) {
+      return (
+        <Card className="card-lift overflow-hidden flex flex-col">
+          <div className="aspect-square bg-slate-50 flex items-center justify-center overflow-hidden">
+            <img
+              src={product.image_url}
+              alt={product.name}
+              className="w-full h-full object-contain p-4"
+              onError={(e) => { e.currentTarget.style.display = "none"; }}
+            />
+          </div>
+          <div className="p-5 flex flex-col flex-1">
+            <Badge className="self-start mb-2 bg-amber-50 text-amber-700">{product.category}</Badge>
+            <h3 className="font-semibold text-slate-900 text-lg leading-tight">{product.name}</h3>
+            <p className="text-sm text-slate-500 mt-1 mb-4 flex-1">{product.description}</p>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-lg font-bold text-slate-900">{formatPrice(product.price)}</span>
+              <Button variant="primary" size="sm" onClick={() => onAdd(product)} disabled={adding}>
+                {adding ? '담는 중…' : '담기'}
+              </Button>
+            </div>
+          </div>
+        </Card>
+      );
+    }
+
+    // ========================================
+    // 📄 HomePage
+    // ========================================
+    function HomePage({ onOpenAuth }) {
+      const { user } = useAuth();
+      const { add } = useCart();
+      const [products, setProducts] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState('');
+      const [category, setCategory] = useState("전체");
+      const [addingId, setAddingId] = useState(null);
+
+      useEffect(() => {
+        let cancelled = false;
+        setLoading(true);
+        apiFetch('/products')
+          .then((data) => { if (!cancelled) setProducts(data); })
+          .catch((err) => { if (!cancelled) setError(err.message); })
+          .finally(() => { if (!cancelled) setLoading(false); });
+        return () => { cancelled = true; };
+      }, []);
+
+      const filtered = useMemo(() => {
+        if (category === "전체") return products;
+        return products.filter((p) => p.category === category);
+      }, [category, products]);
+
+      const handleAdd = async (product) => {
+        if (!user) { onOpenAuth('login'); return; }
+        setAddingId(product.id);
+        try {
+          await add(product.id);
+        } catch (err) {
+          alert(err.message);
+        } finally {
+          setAddingId(null);
+        }
+      };
+
+      return (
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+          <section className="mb-10 text-center sm:text-left">
+            <p className="text-amber-600 font-semibold text-sm tracking-wide uppercase mb-2">New Collection 2026</p>
+            <h1 className="text-3xl sm:text-4xl font-bold text-slate-900 leading-tight">
+              당신의 시선을 완성하는<br className="sm:hidden" /> <span className="text-amber-500">완벽한 안경테</span>
+            </h1>
+            <p className="mt-3 text-slate-600 max-w-xl">
+              미니멀부터 빈티지까지, 매일 다른 무드를 위한 안경 큐레이션.
+            </p>
+            {!user && (
+              <p className="mt-4 inline-block text-xs text-slate-500 bg-amber-50 border border-amber-100 rounded-full px-3 py-1">
+                💡 장바구니 사용은 로그인 후 가능합니다
+              </p>
+            )}
+          </section>
+
+          <div className="mb-8 flex gap-2 overflow-x-auto pb-2 -mx-4 px-4 sm:mx-0 sm:px-0">
+            {CATEGORIES.map((c) => (
+              <Chip key={c} active={category === c} onClick={() => setCategory(c)}>
+                {c}
+              </Chip>
+            ))}
+          </div>
+
+          {loading ? (
+            <div className="text-center py-20 text-slate-400">상품을 불러오는 중…</div>
+          ) : error ? (
+            <div className="text-center py-20 text-rose-500">상품 로딩 실패: {error}</div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-20 text-slate-500">
+              <div className="text-5xl mb-3">🔍</div>
+              해당 카테고리 상품이 없어요
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {filtered.map((p) => (
+                <ProductCard key={p.id} product={p} onAdd={handleAdd} adding={addingId === p.id} />
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ========================================
+    // 📄 CartPage
+    // ========================================
+    function CartPage({ onOpenAuth }) {
+      const { user } = useAuth();
+      const { items, loading, total, updateQty, remove } = useCart();
+
+      const handlePayment = () => {
+        alert("💳 결제 기능은 추후 업데이트 예정입니다.");
+      };
+
+      if (!user) {
+        return (
+          <div className="max-w-3xl mx-auto px-4 sm:px-6 py-16 sm:py-24 text-center">
+            <div className="text-7xl sm:text-8xl mb-6 animate-float">🔐</div>
+            <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 mb-2">로그인이 필요해요</h2>
+            <p className="text-slate-500 mb-8">장바구니는 로그인한 사용자만 이용할 수 있습니다.</p>
+            <div className="flex justify-center gap-3">
+              <Button variant="primary" size="lg" onClick={() => onOpenAuth('login')}>로그인</Button>
+              <Button variant="secondary" size="lg" onClick={() => onOpenAuth('signup')}>회원가입</Button>
+            </div>
+          </div>
+        );
+      }
+
+      if (loading) {
+        return <div className="text-center py-20 text-slate-400">장바구니를 불러오는 중…</div>;
+      }
+
+      if (items.length === 0) {
+        return (
+          <div className="max-w-3xl mx-auto px-4 sm:px-6 py-16 sm:py-24 text-center">
+            <div className="text-7xl sm:text-8xl mb-6 animate-float">🛒</div>
+            <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 mb-2">장바구니가 비어있어요</h2>
+            <p className="text-slate-500 mb-8">마음에 드는 안경테를 담아보세요.</p>
+            <Link
+              to="/"
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-slate-900 text-white font-medium hover:bg-slate-800 transition-colors"
+            >
+              ← 쇼핑 계속하기
+            </Link>
+          </div>
+        );
+      }
+
+      return (
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12 pb-32">
+          <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 mb-6">
+            장바구니 <span className="text-slate-400 text-lg font-medium">({items.length}개 상품)</span>
+          </h2>
+
+          <div className="space-y-4">
+            {items.map((item) => (
+              <Card key={item.id} className="p-4 sm:p-5">
+                <div className="flex gap-4 items-center">
+                  <div className="w-20 h-20 sm:w-24 sm:h-24 flex-shrink-0 rounded-lg bg-slate-50 flex items-center justify-center overflow-hidden">
+                    <img src={item.image_url} alt={item.name} className="w-full h-full object-contain p-2" />
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <Badge className="bg-amber-50 text-amber-700 mb-1">{item.category}</Badge>
+                        <h3 className="font-semibold text-slate-900 truncate">{item.name}</h3>
+                        <p className="text-sm text-slate-500 mt-0.5">{formatPrice(item.price)}</p>
+                      </div>
+                      <button
+                        onClick={() => remove(item.id)}
+                        aria-label="삭제"
+                        className="text-slate-400 hover:text-rose-600 text-sm font-medium px-2 py-1 flex-shrink-0"
+                      >
+                        삭제
+                      </button>
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between gap-3 flex-wrap">
+                      <QtyControl
+                        value={item.quantity}
+                        onDec={() => item.quantity > 1 ? updateQty(item.id, item.quantity - 1) : remove(item.id)}
+                        onInc={() => updateQty(item.id, item.quantity + 1)}
+                      />
+                      <span className="font-bold text-slate-900">
+                        {formatPrice(item.price * item.quantity)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+
+          <div className="fixed bottom-0 left-0 right-0 z-20 bg-white border-t border-slate-200 shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.1)]">
+            <div className="max-w-4xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-4">
+              <div>
+                <p className="text-xs text-slate-500">총 합계</p>
+                <p className="text-xl sm:text-2xl font-bold text-slate-900">{formatPrice(total)}</p>
+              </div>
+              <Button variant="gold" size="lg" onClick={handlePayment}>
+                💳 결제하기
+              </Button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🔀 Routes
+    // ========================================
+    function Routes({ onOpenAuth }) {
+      const { path } = useRouter();
+      if (path === "/cart") return <CartPage onOpenAuth={onOpenAuth} />;
+      return <HomePage onOpenAuth={onOpenAuth} />;
+    }
+
+    // ========================================
+    // 🚀 App
+    // ========================================
+    function Shell() {
+      const [authModal, setAuthModal] = useState({ open: false, mode: 'login' });
+      const openAuth = (mode = 'login') => setAuthModal({ open: true, mode });
+      const closeAuth = () => setAuthModal((s) => ({ ...s, open: false }));
+      const switchMode = (mode) => setAuthModal({ open: true, mode });
+
+      return (
+        <div className="min-h-screen flex flex-col">
+          <Header onOpenAuth={openAuth} />
+          <main className="flex-1">
+            <Routes onOpenAuth={openAuth} />
+          </main>
+          <Footer />
+          <AuthModal
+            mode={authModal.mode}
+            isOpen={authModal.open}
+            onClose={closeAuth}
+            onSwitchMode={switchMode}
+          />
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <Router>
+          <AuthProvider>
+            <CartProvider>
+              <Shell />
+            </CartProvider>
+          </AuthProvider>
+        </Router>
+      );
+    }
+
+    // ========================================
+    // Render
+    // ========================================
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
